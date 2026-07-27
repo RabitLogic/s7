@@ -9,6 +9,9 @@ _build/
 .DS_Store
 Thumbs.db
 
+# Articles (not uploaded to registries)
+articles/
+
 # Temporary
 *.swp
 *.swo

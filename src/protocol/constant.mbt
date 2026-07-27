@@ -1,6 +1,7 @@
 // S7 Protocol Constants - matching Rust s7 library
 
 // ===== Word Length (WL) constants =====
+
 ///|
 pub const WL_BIT : Int = 0x01
 

@@ -1,7 +1,11 @@
+///|
 pub type S7Result[T] = @src.S7Result[T]
+
+///|
 pub type S7Error = @src.S7Error
 
 // Transport trait - pluggable async transport abstraction
+
 ///|
 pub trait Transport {
   async fn send(Self, Array[Byte]) -> S7Result[Array[Byte]]

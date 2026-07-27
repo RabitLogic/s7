@@ -1,0 +1,104 @@
+// Tests for field types
+
+///|
+test "BoolField basic" {
+  let bf = BoolField::new(1, 0, 0)
+  inspect(bf.db_number(), content="1")
+  inspect(bf.offset(), content="0")
+  inspect(bf.value(), content="false")
+
+  let on = BoolField::from_byte(1, 0, 0, 0x01)
+  inspect(on.value(), content="true")
+
+  let off = BoolField::from_byte(1, 0, 1, 0x01)
+  inspect(off.value(), content="false")
+}
+
+///|
+test "BoolField set_value" {
+  let bf = BoolField::new(1, 0, 0)
+  let on = bf.set_value(true)
+  inspect(on.value(), content="true")
+  inspect(on.to_bytes(), content="[1]")
+
+  let off = bf.set_value(false)
+  inspect(off.value(), content="false")
+  inspect(off.to_bytes(), content="[0]")
+}
+
+///|
+test "BoolField bit manipulation" {
+  let bf = BoolField::new(1, 0, 2)
+  let on = bf.set_value(true)
+  inspect(on.to_bytes()[0].to_int(), content="4")
+
+  let bf2 = BoolField::from_byte(1, 0, 2, 0xFF)
+  let off = bf2.set_value(false)
+  inspect(off.to_bytes()[0].to_int(), content="251")
+}
+
+///|
+test "BoolField size" {
+  inspect(BoolField::size(), content="1")
+  let bf = BoolField::new(1, 5, 3)
+  inspect(bf.db_number(), content="1")
+  inspect(bf.offset(), content="5")
+  inspect(bf.to_bytes(), content="[0]")
+}
+
+///|
+test "WordField" {
+  let wf = WordField::new(1, 0, [0xAB, 0xCD])
+  inspect(wf.db_number(), content="1")
+  inspect(wf.value(), content="43981")
+  inspect(WordField::size(), content="2")
+  inspect(wf.to_bytes(), content="[171, 205]")
+}
+
+///|
+test "FloatField" {
+  let ff = FloatField::new(1, 0, [0x42, 0x68, 0x00, 0x00])
+  inspect(ff.value(), content="53.5")
+  inspect(FloatField::size(), content="4")
+  let bytes = ff.to_bytes()
+  let ff2 = FloatField::new(1, 0, bytes)
+  inspect(ff2.value(), content="53.5")
+}
+
+///|
+test "DoubleField" {
+  let df = DoubleField::new(1, 0, [0x40, 0x5E, 0xDD, 0x2F, 0x1A, 0x9F, 0xBE, 0x77])
+  inspect(df.db_number(), content="1")
+  inspect(DoubleField::size(), content="8")
+}
+
+///|
+test "FieldValue enum" {
+  let bf = FieldValue::FBool(BoolField::new(1, 0, 0))
+  inspect(bf.data_block(), content="1")
+  inspect(bf.offset(), content="0")
+  inspect(bf.size(), content="1")
+  inspect(bf.value_bool(), content="Some(true)")
+
+  let wf = FieldValue::FWord(WordField::new(1, 2, [0xAB, 0xCD]))
+  inspect(wf.value_int(), content="Some(43981)")
+  inspect(wf.size(), content="2")
+
+  let ff = FieldValue::FFloat(FloatField::new(1, 4, [0x42, 0x68, 0x00, 0x00]))
+  inspect(ff.value_double(), content="Some(53.5)")
+  inspect(ff.size(), content="4")
+}
+
+///|
+test "FieldValue none checks" {
+  let bf = FieldValue::FBool(BoolField::new(1, 0, 0))
+  inspect(bf.value_int(), content="None")
+  inspect(bf.value_double(), content="None")
+
+  let wf = FieldValue::FWord(WordField::new(1, 0, [0x00, 0x00]))
+  inspect(wf.value_bool(), content="None")
+
+  let df = FieldValue::FDouble(DoubleField::new(1, 0, [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]))
+  inspect(df.value_double(), content="Some(0)")
+  inspect(df.size(), content="8")
+}

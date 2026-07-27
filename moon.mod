@@ -6,7 +6,7 @@ description = "MoonBit S7 Communication Protocol Library for Siemens PLC"
 
 license = "MIT"
 
-repository = ""
+repository = "https://github.com/RabitLogic/s7.git"
 
 import {
   "moonbitlang/async@0.20.3",
