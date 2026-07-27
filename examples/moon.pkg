@@ -1,0 +1,7 @@
+import {
+  "RabitLogic/s7/src",
+  "RabitLogic/s7/src/transport",
+  "RabitLogic/s7/src/client",
+}
+
+pkgtype(kind: "executable")

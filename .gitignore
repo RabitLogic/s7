@@ -1,0 +1,15 @@
+# MoonBit build output
+_build/
+.mooncakes/
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary
+*.swp
+*.swo
+*~

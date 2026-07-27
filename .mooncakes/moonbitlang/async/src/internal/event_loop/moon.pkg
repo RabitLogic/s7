@@ -1,0 +1,72 @@
+import {
+  "moonbitlang/core/deque",
+  "moonbitlang/core/sorted_set",
+  "moonbitlang/core/cmp",
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/core/env",
+  "moonbitlang/core/debug",
+  "moonbitlang/async/os_error",
+  "moonbitlang/async/internal/coroutine",
+  "moonbitlang/async/internal/fd_util",
+  "moonbitlang/async/internal/c_buffer",
+  "moonbitlang/async/internal/os_string",
+}
+
+import {
+  "moonbitlang/core/encoding/utf8",
+  "moonbitlang/async",
+  "moonbitlang/async/pipe",
+  "moonbitlang/async/fs",
+  "moonbitlang/async/io",
+} for "test"
+
+import {
+  "moonbitlang/async",
+} for "wbtest"
+
+options(
+  "native-stub": [
+    "epoll.c",
+    "kqueue.c",
+    "iocp.c",
+    "thread_pool.c",
+    "io_unix.c",
+    "io_windows.c",
+    "process.c",
+    "detect_file_kind.c",
+    "signal.c",
+    "stdio.c",
+  ],
+  targets: {
+    "cancel_before_submit_test.mbt": [ "native" ],
+    "event_loop.js.mbt": [ "js" ],
+    "event_loop.mbt": [ "native", "wasm" ],
+    "event_loop_unix.mbt": [ "native", "wasm" ],
+    "event_loop_windows.mbt": [ "native", "wasm" ],
+    "event_loop.wasm.mbt": [ "wasm" ],
+    "fs.mbt": [ "native", "wasm" ],
+    "io.mbt": [ "native", "wasm" ],
+    "io_unix.mbt": [ "native", "wasm" ],
+    "io_windows.mbt": [ "native", "wasm" ],
+    "io_result.native.mbt": [ "native" ],
+    "io_result.wasm.mbt": [ "wasm" ],
+    "missing_close_test.mbt": [ "native" ],
+    "network.mbt": [ "native", "wasm" ],
+    "network.wasm.mbt": [ "wasm" ],
+    "network_unix.mbt": [ "native", "wasm" ],
+    "network_windows.mbt": [ "native", "wasm" ],
+    "event_bus.mbt": [ "native" ],
+    "process.mbt": [ "native", "wasm" ],
+    "process_unix.mbt": [ "native", "wasm" ],
+    "process_windows.mbt": [ "native", "wasm" ],
+    "event_bus.wasm.mbt": [ "wasm" ],
+    "signal.mbt": [ "native", "wasm" ],
+    "stdio.mbt": [ "native", "wasm" ],
+    "thread_pool.mbt": [ "native" ],
+    "timer.mbt": [ "native", "wasm" ],
+    "io.wasm.mbt": [ "wasm" ],
+    "unimplemented.mbt": [ "wasm-gc" ],
+    "worker_wbtest.mbt": [ "native", "js" ],
+    "thread_pool.wasm.mbt": [ "wasm" ],
+  },
+)

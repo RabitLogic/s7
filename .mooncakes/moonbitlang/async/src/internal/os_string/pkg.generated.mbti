@@ -1,0 +1,25 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbitlang/async/internal/os_string"
+
+import {
+  "moonbitlang/async/internal/c_buffer",
+}
+
+// Values
+pub fn decode(@c_buffer.Buffer, offset? : Int, len? : Int) -> String
+
+pub let empty : OsString
+
+pub fn encode(StringView) -> OsString
+
+// Errors
+
+// Types and methods
+type OsString
+pub fn OsString::bytes_length(Self) -> Int
+pub impl Show for OsString
+
+// Type aliases
+
+// Traits
+

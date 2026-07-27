@@ -1,0 +1,13 @@
+import {
+  "moonbitlang/core/argparse",
+  "moonbitlang/core/random",
+  "moonbitlang/core/env",
+  "moonbitlang/core/buffer",
+  "moonbitlang/core/string",
+  "moonbitlang/async",
+  "moonbitlang/async/socket",
+}
+
+supported_targets = "+native"
+
+pkgtype(kind: "executable")

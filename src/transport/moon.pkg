@@ -1,0 +1,12 @@
+import {
+  "RabitLogic/s7/src",
+  "RabitLogic/s7/src/protocol",
+  "moonbitlang/async/socket",
+}
+
+options(
+  targets: {
+    "tcp.mbt": [ "native" ],
+    "tcp_stub.mbt": [ "wasm", "wasm-gc", "js" ],
+  },
+)
