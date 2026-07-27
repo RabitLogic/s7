@@ -1,4 +1,4 @@
-// TCP Transport - full async negotiation via moonbitlang/async/socket
+// TCP Transport - raw socket FFI for connect + S7 protocol
 // connect() handles: TCP connect → COTP CR/CC → PDU setup → ready
 
 ///|
@@ -21,6 +21,32 @@ extern "C" fn platform_recv(
 
 ///|
 extern "C" fn platform_close(fd : Int) -> Int = "close"
+
+///|
+extern "C" fn socket_connect(
+  ip : Int,
+  port : Int,
+) -> Int = "moon_s7_connect"
+
+///|
+/// Parse IPv4 string like "172.16.152.1" to u32 integer
+fn parse_ip4(host : String) -> Int {
+  let mut result = 0
+  let mut octet = 0
+  let mut dots = 0
+  for i in 0..<host.length() {
+    let ch = host[i]
+    if ch == '.' {
+      result = (result << 8) | octet
+      octet = 0
+      dots = dots + 1
+    } else if ch >= '0' && ch <= '9' {
+      octet = octet * 10 + (ch.to_int() - 48)
+    }
+  }
+  result = (result << 8) | octet
+  result
+}
 
 ///|
 pub struct TcpConfig {
@@ -56,7 +82,7 @@ pub fn TcpConfig::new(
     write_timeout,
     use_tls: false,
     local_tsap: [0x01, 0x00],
-    remote_tsap: [0x01, 0x01],
+    remote_tsap: [0x03, slot.to_byte()],
     rack,
     slot,
     conn_type,
@@ -88,59 +114,61 @@ pub fn TcpConnection::new(c : TcpConfig) -> TcpConnection {
 }
 
 ///|
-/// Full async negotiation: TCP connect → COTP CR/CC → S7 PDU setup
-pub async fn TcpConnection::connect(self : Self) -> S7Result[TcpConnection] {
+/// TCP connect → COTP CR/CC → S7 PDU setup (sync, native only)
+pub fn TcpConnection::connect(self : Self) -> S7Result[TcpConnection] {
   if self.connected {
     return Err(S7Error::already_connected())
   }
-  // 1. TCP connect via official async library
-  let sock = @socket.Tcp::connect_to_host(
-    self.config.host,
-    port=self.config.port,
-  ) catch {
-    err =>
-      return Err(
-        S7Error::connection_failed(
-          "connect to \{self.config.host}:\{self.config.port}: \{err.to_string()}",
-        ),
-      )
+
+  // 1. Parse IP and connect via C FFI
+  let ip = parse_ip4(self.config.host)
+  println("  parsed IP=\{ip} port=\{self.config.port}")
+  let raw_fd = socket_connect(ip, self.config.port)
+  if raw_fd < 0 {
+    return Err(S7Error::connection_failed(
+      "connect to \{self.config.host}:\{self.config.port} failed (code=\{raw_fd})",
+    ))
   }
-  let fd = sock.fd()
+  println("  connected, fd=\{raw_fd}")
 
   // 2. COTP Connection Request / Confirm
   let cr = @protocol.build_cotp_cr(self.local_tsap, self.remote_tsap)
-  if platform_send(fd, to_fa(cr), cr.length(), 0) < 0 {
-    let _ = platform_close(fd)
+  println("  COTP CR: \{hex_dump(cr)}")
+  if platform_send(raw_fd, to_fa(cr), cr.length(), 0) < 0 {
+    let _ = platform_close(raw_fd)
     return Err(S7Error::transport("COTP CR send failed"))
   }
+  println("  COTP CR sent, waiting for CC...")
   let cc_buf : FixedArray[Byte] = FixedArray::make(1024, 0x00)
-  let cc_n = platform_recv(fd, cc_buf, 1024, 0)
+  let cc_n = platform_recv(raw_fd, cc_buf, 1024, 0)
+  println("  COTP recv returned \{cc_n} bytes")
   if cc_n < 4 {
-    let _ = platform_close(fd)
-    return Err(S7Error::transport("COTP CC too short"))
+    let _ = platform_close(raw_fd)
+    return Err(S7Error::transport("COTP CC too short: \{cc_n} bytes"))
   }
   let cc_data : Array[Byte] = []
   for i in 0..<cc_n {
     cc_data.push(cc_buf[i])
   }
+  println("  COTP CC data: \{hex_dump(cc_data)}")
   let _cotp = match @protocol.parse_cotp_cc(cc_data) {
     Err(e) => {
-      let _ = platform_close(fd)
+      let _ = platform_close(raw_fd)
       return Err(e)
     }
     Ok(tpdu) => tpdu
   }
 
-  // 3. S7 Setup Communication (PDU negotiation)
+  // 4. S7 Setup Communication (PDU negotiation)
   let spdu = @protocol.build_setup_pdu(1, 1, 1)
-  if platform_send(fd, to_fa(spdu), spdu.length(), 0) < 0 {
-    let _ = platform_close(fd)
+  if platform_send(raw_fd, to_fa(spdu), spdu.length(), 0) < 0 {
+    let _ = platform_close(raw_fd)
     return Err(S7Error::transport("Setup PDU send failed"))
   }
   let st_buf : FixedArray[Byte] = FixedArray::make(1024, 0x00)
-  let st_n = platform_recv(fd, st_buf, 1024, 0)
+  let st_n = platform_recv(raw_fd, st_buf, 1024, 0)
   if st_n < 4 {
-    let _ = platform_close(fd)
+    let _ = platform_close(raw_fd)
     return Err(S7Error::transport("Setup resp too short"))
   }
   let st_data : Array[Byte] = []
@@ -149,7 +177,7 @@ pub async fn TcpConnection::connect(self : Self) -> S7Result[TcpConnection] {
   }
   let pdu_size = match @protocol.parse_setup_resp(st_data) {
     Err(e) => {
-      let _ = platform_close(fd)
+      let _ = platform_close(raw_fd)
       return Err(e)
     }
     Ok(ps) => ps
@@ -158,7 +186,7 @@ pub async fn TcpConnection::connect(self : Self) -> S7Result[TcpConnection] {
   Ok({
     config: self.config,
     connected: true,
-    fd,
+    fd: raw_fd,
     pdu_ref: 2,
     pdu_size,
     local_tsap: self.local_tsap,
@@ -181,6 +209,22 @@ fn to_fa(arr : Array[Byte]) -> FixedArray[Byte] {
     fa[i] = arr[i]
   }
   fa
+}
+
+///|
+fn hex_char(v : Int) -> Char {
+  if v < 10 { Char::from_int(48 + v) } else { Char::from_int(55 + v) }
+}
+
+///|
+fn hex_dump(data : Array[Byte]) -> String {
+  let mut s = ""
+  for i in 0..<data.length() {
+    let v = data[i].to_int()
+    s = s + hex_char((v >> 4) & 0xF).to_string() + hex_char(v & 0xF).to_string()
+    if i < data.length() - 1 { s = s + " " }
+  }
+  s
 }
 
 ///|

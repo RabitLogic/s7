@@ -1,0 +1,5 @@
+import {
+  "RabitLogic/s7/lib",
+  "RabitLogic/s7/lib/protocol",
+  "RabitLogic/s7/lib/transport",
+}

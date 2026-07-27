@@ -1,7 +1,6 @@
 import {
-  "RabitLogic/s7/src",
-  "RabitLogic/s7/src/protocol",
-  "moonbitlang/async/socket",
+  "RabitLogic/s7/lib",
+  "RabitLogic/s7/lib/protocol",
 }
 
 options(
@@ -9,4 +8,5 @@ options(
     "tcp.mbt": [ "native" ],
     "tcp_stub.mbt": [ "wasm", "wasm-gc", "js" ],
   },
+  native_stub: [ "native_socket.c" ],
 )

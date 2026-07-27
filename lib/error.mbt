@@ -28,6 +28,37 @@ pub enum S7Error {
 }
 
 ///|
+pub impl Show for S7Error with fn output(self, logger) {
+  match self {
+    ConnectionFailed(msg) => logger <+ "ConnectionFailed(\{msg})"
+    ConnectionTimeout => logger <+ "ConnectionTimeout"
+    ConnectionClosed => logger <+ "ConnectionClosed"
+    InvalidPDU(msg) => logger <+ "InvalidPDU(\{msg})"
+    InvalidParameter(msg) => logger <+ "InvalidParameter(\{msg})"
+    PlcError(code, msg) => logger <+ "PlcError(\{code}, \{msg})"
+    Timeout(msg) => logger <+ "Timeout(\{msg})"
+    TransportError(msg) => logger <+ "TransportError(\{msg})"
+    TlsError(msg) => logger <+ "TlsError(\{msg})"
+    VersionMismatch(a, b) => logger <+ "VersionMismatch(\{a}, \{b})"
+    BufferOverflow => logger <+ "BufferOverflow"
+    ItemNotFound(msg) => logger <+ "ItemNotFound(\{msg})"
+    NotConnected => logger <+ "NotConnected"
+    AlreadyConnected => logger <+ "AlreadyConnected"
+    DataConversionError(msg) => logger <+ "DataConversionError(\{msg})"
+    Unsupported(msg) => logger <+ "Unsupported(\{msg})"
+    ResourceExhausted(msg) => logger <+ "ResourceExhausted(\{msg})"
+    JobPending => logger <+ "JobPending"
+    InvalidDataSize => logger <+ "InvalidDataSize"
+    InvalidPassword => logger <+ "InvalidPassword"
+    NeedPassword => logger <+ "NeedPassword"
+    FunNotAvailable => logger <+ "FunNotAvailable"
+    DataOverPdu => logger <+ "DataOverPdu"
+    CpuError(code) => logger <+ "CpuError(\{code})"
+    InvalidResponse(msg) => logger <+ "InvalidResponse(\{msg})"
+  }
+}
+
+///|
 pub type S7Result[T] = Result[T, S7Error]
 
 ///|

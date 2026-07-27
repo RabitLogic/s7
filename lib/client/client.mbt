@@ -1,9 +1,9 @@
 ///|
 /// S7 Client - async, uses pre-negotiated TcpConnection
-pub type S7Result[T] = @src.S7Result[T]
+pub type S7Result[T] = @lib.S7Result[T]
 
 ///|
-pub type S7Error = @src.S7Error
+pub type S7Error = @lib.S7Error
 
 ///|
 pub struct S7Client {

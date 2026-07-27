@@ -1,0 +1,7 @@
+import {
+  "RabitLogic/s7/lib/client",
+  "RabitLogic/s7/lib/transport",
+  "moonbitlang/async",
+}
+
+pkgtype(kind: "executable")

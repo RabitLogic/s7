@@ -1,8 +1,8 @@
 ///|
-pub type S7Result[T] = @src.S7Result[T]
+pub type S7Result[T] = @lib.S7Result[T]
 
 ///|
-pub type S7Error = @src.S7Error
+pub type S7Error = @lib.S7Error
 
 ///|
 const PID : Byte = 0x32
@@ -346,13 +346,14 @@ pub fn parse_setup_resp(data : Array[Byte]) -> S7Result[Int] {
 pub fn build_cotp_cr(lsap : Array[Byte], rsap : Array[Byte]) -> Array[Byte] {
   let sl = lsap.length()
   let rl = rsap.length()
-  let total = 4 + 7 + 2 + sl + 2 + rl + 3
+  let body_len = 7 + 2 + sl + 2 + rl + 3
+  let total = 4 + body_len
   let pkt : Array[Byte] = Array::make(total, 0x00)
   pkt[0] = 0x03
   pkt[1] = 0x00
   pkt[2] = hi8(total >> 8)
   pkt[3] = lo8(total)
-  pkt[4] = 0x11
+  pkt[4] = body_len.to_byte()
   pkt[5] = 0xE0
   pkt[6] = 0x00
   pkt[7] = 0x00
