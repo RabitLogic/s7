@@ -20,11 +20,15 @@ pub struct WriteItem {
 
 ///|
 pub fn ReadItem::new(area : Area, off : Int, dt : DataType) -> ReadItem {
+  let cnt = match dt {
+    ByteArray(n) => n
+    _ => 1
+  }
   {
     area,
     byte_offset: off,
     bit_offset: 0,
-    count: 1,
+    count: cnt,
     data_type: dt,
     word_len: dt_to_word_len(dt),
   }
@@ -37,11 +41,15 @@ pub fn ReadItem::with_word_len(
   dt : DataType,
   wl : Int,
 ) -> ReadItem {
+  let cnt = match dt {
+    ByteArray(n) => n
+    _ => 1
+  }
   {
     area,
     byte_offset: off,
     bit_offset: 0,
-    count: 1,
+    count: cnt,
     data_type: dt,
     word_len: wl,
   }

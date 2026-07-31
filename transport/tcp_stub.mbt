@@ -57,9 +57,9 @@ pub fn TcpConnection::new(c : TcpConfig) -> TcpConnection {
 ///|
 pub async fn TcpConnection::connect(
   self : Self,
-) -> @src.S7Result[TcpConnection] {
+) -> @core.S7Result[TcpConnection] {
   if self.connected {
-    return Err(@src.S7Error::already_connected())
+    return Err(@core.S7Error::already_connected())
   }
   Ok({ config: self.config, connected: true, pdu_ref: 1, pdu_size: 480 })
 }
@@ -73,31 +73,31 @@ pub fn TcpConnection::disconnect(self : Self) -> Unit {
 pub async fn TcpConnection::send(
   self : Self,
   _data : Array[Byte],
-) -> @src.S7Result[Array[Byte]] {
+) -> @core.S7Result[Array[Byte]] {
   if !self.connected {
-    return Err(@src.S7Error::not_connected())
+    return Err(@core.S7Error::not_connected())
   }
   Ok(Array::make(1024, 0x00))
 }
 
 ///|
-pub fn TcpConnection::send_raw(
+pub async fn TcpConnection::send_raw(
   self : Self,
   data : Array[Byte],
-) -> @src.S7Result[Int] {
+) -> @core.S7Result[Int] {
   if !self.connected {
-    return Err(@src.S7Error::not_connected())
+    return Err(@core.S7Error::not_connected())
   }
   Ok(data.length())
 }
 
 ///|
-pub fn TcpConnection::receive(
+pub async fn TcpConnection::receive(
   self : Self,
   len : Int,
-) -> @src.S7Result[Array[Byte]] {
+) -> @core.S7Result[Array[Byte]] {
   if !self.connected {
-    return Err(@src.S7Error::not_connected())
+    return Err(@core.S7Error::not_connected())
   }
   Ok(Array::make(len, 0x00))
 }

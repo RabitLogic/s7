@@ -1,9 +1,9 @@
 ///|
 /// S7 Client - async, uses pre-negotiated TcpConnection
-pub type S7Result[T] = @src.S7Result[T]
+pub type S7Result[T] = @core.S7Result[T]
 
 ///|
-pub type S7Error = @src.S7Error
+pub type S7Error = @core.S7Error
 
 ///|
 pub struct S7Client {
@@ -188,7 +188,7 @@ pub async fn S7Client::plc_restart(self : Self) -> S7Result[Unit] {
 }
 
 ///|
-pub fn S7Client::plc_status(self : Self) -> S7Result[@protocol.CpuStatus] {
+pub async fn S7Client::plc_status(self : Self) -> S7Result[@protocol.CpuStatus] {
   if !self.connected {
     return Err(S7Error::not_connected())
   }
@@ -216,7 +216,7 @@ pub async fn S7Client::cp_info(self : Self) -> S7Result[@protocol.CPInfo] {
 // ===== Internal: PDU Chunking =====
 
 ///|
-fn chunked_read(
+async fn chunked_read(
   cl : S7Client,
   area : @protocol.Area,
   start : Int,
@@ -269,7 +269,7 @@ fn chunked_read(
 }
 
 ///|
-fn exec_write(
+async fn exec_write(
   cl : S7Client,
   items : Array[@protocol.WriteItem],
 ) -> S7Result[Unit] {
@@ -288,7 +288,7 @@ fn exec_write(
 }
 
 ///|
-fn do_ctrl(cl : S7Client, pdu : Array[Byte]) -> S7Result[Unit] {
+async fn do_ctrl(cl : S7Client, pdu : Array[Byte]) -> S7Result[Unit] {
   if !cl.connected {
     return Err(S7Error::not_connected())
   }
@@ -304,7 +304,7 @@ fn do_ctrl(cl : S7Client, pdu : Array[Byte]) -> S7Result[Unit] {
 }
 
 ///|
-fn szl_read(
+async fn szl_read(
   cl : S7Client,
   id : Int,
   index : Int,
@@ -351,7 +351,7 @@ fn szl_read(
 }
 
 ///|
-fn szl_read_cp(
+async fn szl_read_cp(
   cl : S7Client,
   id : Int,
   index : Int,

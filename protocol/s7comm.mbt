@@ -1,8 +1,8 @@
 ///|
-pub type S7Result[T] = @src.S7Result[T]
+pub type S7Result[T] = @core.S7Result[T]
 
 ///|
-pub type S7Error = @src.S7Error
+pub type S7Error = @core.S7Error
 
 ///|
 const PID : Byte = 0x32
@@ -672,7 +672,7 @@ pub fn parse_cp_info(data : Array[Byte]) -> S7Result[CPInfo] {
 
 ///|
 fn str_slice(data : Array[Byte], start : Int, maxlen : Int) -> String {
-  let mut s = ""
+  let sb = StringBuilder::new()
   let end = if start + maxlen < data.length() {
     start + maxlen
   } else {
@@ -683,7 +683,7 @@ fn str_slice(data : Array[Byte], start : Int, maxlen : Int) -> String {
     if b == 0x00 {
       break
     }
-    s = s + b.to_string()
+    sb.write_char(b.to_int().unsafe_to_char())
   }
-  s
+  sb.to_string()
 }

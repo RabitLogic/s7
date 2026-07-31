@@ -25,7 +25,7 @@ pub enum S7Error {
   DataOverPdu
   CpuError(Int)
   InvalidResponse(String)
-}
+} derive(Show)
 
 ///|
 pub type S7Result[T] = Result[T, S7Error]

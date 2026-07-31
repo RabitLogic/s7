@@ -1,26 +1,5 @@
-// TCP Transport - full async negotiation via moonbitlang/async/socket
+// TCP Transport - async I/O via moonbitlang/async/socket + @io
 // connect() handles: TCP connect → COTP CR/CC → PDU setup → ready
-
-///|
-#borrow(data)
-extern "C" fn platform_send(
-  fd : Int,
-  data : FixedArray[Byte],
-  len : Int,
-  flags : Int,
-) -> Int = "send"
-
-///|
-#owned(buf)
-extern "C" fn platform_recv(
-  fd : Int,
-  buf : FixedArray[Byte],
-  len : Int,
-  flags : Int,
-) -> Int = "recv"
-
-///|
-extern "C" fn platform_close(fd : Int) -> Int = "close"
 
 ///|
 pub struct TcpConfig {
@@ -67,7 +46,7 @@ pub fn TcpConfig::new(
 pub struct TcpConnection {
   config : TcpConfig
   connected : Bool
-  fd : Int
+  tcp : @socket.Tcp?
   pdu_ref : Int
   pdu_size : Int
   local_tsap : Array[Byte]
@@ -79,7 +58,7 @@ pub fn TcpConnection::new(c : TcpConfig) -> TcpConnection {
   {
     config: c,
     connected: false,
-    fd: -1,
+    tcp: None,
     pdu_ref: 0,
     pdu_size: 480,
     local_tsap: c.local_tsap,
@@ -105,18 +84,28 @@ pub async fn TcpConnection::connect(self : Self) -> S7Result[TcpConnection] {
         ),
       )
   }
-  let fd = sock.fd()
 
   // 2. COTP Connection Request / Confirm
   let cr = @protocol.build_cotp_cr(self.local_tsap, self.remote_tsap)
-  if platform_send(fd, to_fa(cr), cr.length(), 0) < 0 {
-    let _ = platform_close(fd)
-    return Err(S7Error::transport("COTP CR send failed"))
+  try {
+    sock.write(to_bytes(cr))
+  } catch {
+    err => {
+      sock.close()
+      return Err(S7Error::transport("COTP CR send failed: \{err.to_string()}"))
+    }
   }
   let cc_buf : FixedArray[Byte] = FixedArray::make(1024, 0x00)
-  let cc_n = platform_recv(fd, cc_buf, 1024, 0)
+  let cc_n = try {
+    sock.read(cc_buf, max_len=1024)
+  } catch {
+    err => {
+      sock.close()
+      return Err(S7Error::transport("COTP CC recv failed: \{err.to_string()}"))
+    }
+  }
   if cc_n < 4 {
-    let _ = platform_close(fd)
+    sock.close()
     return Err(S7Error::transport("COTP CC too short"))
   }
   let cc_data : Array[Byte] = []
@@ -125,7 +114,7 @@ pub async fn TcpConnection::connect(self : Self) -> S7Result[TcpConnection] {
   }
   let _cotp = match @protocol.parse_cotp_cc(cc_data) {
     Err(e) => {
-      let _ = platform_close(fd)
+      sock.close()
       return Err(e)
     }
     Ok(tpdu) => tpdu
@@ -133,14 +122,25 @@ pub async fn TcpConnection::connect(self : Self) -> S7Result[TcpConnection] {
 
   // 3. S7 Setup Communication (PDU negotiation)
   let spdu = @protocol.build_setup_pdu(1, 1, 1)
-  if platform_send(fd, to_fa(spdu), spdu.length(), 0) < 0 {
-    let _ = platform_close(fd)
-    return Err(S7Error::transport("Setup PDU send failed"))
+  try {
+    sock.write(to_bytes(spdu))
+  } catch {
+    err => {
+      sock.close()
+      return Err(S7Error::transport("Setup PDU send failed: \{err.to_string()}"))
+    }
   }
   let st_buf : FixedArray[Byte] = FixedArray::make(1024, 0x00)
-  let st_n = platform_recv(fd, st_buf, 1024, 0)
+  let st_n = try {
+    sock.read(st_buf, max_len=1024)
+  } catch {
+    err => {
+      sock.close()
+      return Err(S7Error::transport("Setup resp recv failed: \{err.to_string()}"))
+    }
+  }
   if st_n < 4 {
-    let _ = platform_close(fd)
+    sock.close()
     return Err(S7Error::transport("Setup resp too short"))
   }
   let st_data : Array[Byte] = []
@@ -149,7 +149,7 @@ pub async fn TcpConnection::connect(self : Self) -> S7Result[TcpConnection] {
   }
   let pdu_size = match @protocol.parse_setup_resp(st_data) {
     Err(e) => {
-      let _ = platform_close(fd)
+      sock.close()
       return Err(e)
     }
     Ok(ps) => ps
@@ -158,7 +158,7 @@ pub async fn TcpConnection::connect(self : Self) -> S7Result[TcpConnection] {
   Ok({
     config: self.config,
     connected: true,
-    fd,
+    tcp: Some(sock),
     pdu_ref: 2,
     pdu_size,
     local_tsap: self.local_tsap,
@@ -168,81 +168,113 @@ pub async fn TcpConnection::connect(self : Self) -> S7Result[TcpConnection] {
 
 ///|
 pub fn TcpConnection::disconnect(self : Self) -> Unit {
-  if self.connected {
-    let _ = platform_close(self.fd)
+  match self.tcp {
+    Some(tcp) => tcp.close()
+    None => ()
   }
 }
 
 ///|
-fn to_fa(arr : Array[Byte]) -> FixedArray[Byte] {
+fn to_bytes(arr : Array[Byte]) -> Bytes {
   let n = arr.length()
   let fa : FixedArray[Byte] = FixedArray::make(n, 0x00)
   for i in 0..<n {
     fa[i] = arr[i]
   }
-  fa
+  fa.unsafe_reinterpret_as_bytes()
 }
 
 ///|
-pub fn TcpConnection::send(
+pub async fn TcpConnection::send(
   self : Self,
   data : Array[Byte],
 ) -> S7Result[Array[Byte]] {
   if !self.connected {
     return Err(S7Error::not_connected())
   }
-  let sb = to_fa(data)
-  if platform_send(self.fd, sb, data.length(), 0) < 0 {
-    return Err(S7Error::transport("Send failed"))
+  match self.tcp {
+    None => Err(S7Error::not_connected())
+    Some(tcp) => {
+      try {
+        tcp.write(to_bytes(data))
+      } catch {
+        err => return Err(S7Error::transport("Send failed: \{err.to_string()}"))
+      }
+      let hb : FixedArray[Byte] = FixedArray::make(4, 0x00)
+      let hn = try {
+        tcp.read(hb, max_len=4)
+      } catch {
+        err => return Err(S7Error::transport("Response too short: \{err.to_string()}"))
+      }
+      if hn < 4 {
+        return Err(S7Error::transport("Response too short"))
+      }
+      let rl = (hb[2].to_int() << 8) | hb[3].to_int()
+      if rl < 4 {
+        return Err(S7Error::invalid_pdu("Invalid TPKT"))
+      }
+      let bb : FixedArray[Byte] = FixedArray::make(rl - 4, 0x00)
+      let bn = try {
+        tcp.read(bb, max_len=rl - 4)
+      } catch {
+        err => return Err(S7Error::transport("Response read failed: \{err.to_string()}"))
+      }
+      let result : Array[Byte] = []
+      for i in 0..<4 {
+        result.push(hb[i])
+      }
+      let cnt = if bn < 0 { 0 } else { bn }
+      for i in 0..<cnt {
+        result.push(bb[i])
+      }
+      Ok(result)
+    }
   }
-  let hb : FixedArray[Byte] = FixedArray::make(4, 0x00)
-  if platform_recv(self.fd, hb, 4, 0) < 4 {
-    return Err(S7Error::transport("Response too short"))
-  }
-  let rl = (hb[2].to_int() << 8) | hb[3].to_int()
-  if rl < 4 {
-    return Err(S7Error::invalid_pdu("Invalid TPKT"))
-  }
-  let bb : FixedArray[Byte] = FixedArray::make(rl - 4, 0x00)
-  let bn = platform_recv(self.fd, bb, rl - 4, 0)
-  let result : Array[Byte] = []
-  for i in 0..<4 {
-    result.push(hb[i])
-  }
-  let cnt = if bn < 0 { 0 } else { bn }
-  for i in 0..<cnt {
-    result.push(bb[i])
-  }
-  Ok(result)
 }
 
 ///|
-pub fn TcpConnection::send_raw(
+pub async fn TcpConnection::send_raw(
   self : Self,
   data : Array[Byte],
 ) -> S7Result[Int] {
   if !self.connected {
     return Err(S7Error::not_connected())
   }
-  Ok(platform_send(self.fd, to_fa(data), data.length(), 0))
+  match self.tcp {
+    None => Err(S7Error::not_connected())
+    Some(tcp) => {
+      try {
+        tcp.write(to_bytes(data))
+        Ok(data.length())
+      } catch {
+        err => Err(S7Error::transport("Send failed: \{err.to_string()}"))
+      }
+    }
+  }
 }
 
 ///|
-pub fn TcpConnection::receive(
-  self : Self,
-  len : Int,
-) -> S7Result[Array[Byte]] {
+pub async fn TcpConnection::receive(self : Self, len : Int) -> S7Result[Array[Byte]] {
   if !self.connected {
     return Err(S7Error::not_connected())
   }
-  let buf : FixedArray[Byte] = FixedArray::make(len, 0x00)
-  let n = platform_recv(self.fd, buf, len, 0)
-  let result : Array[Byte] = []
-  let cnt = if n < 0 { 0 } else { n }
-  for i in 0..<cnt {
-    result.push(buf[i])
+  match self.tcp {
+    None => Err(S7Error::not_connected())
+    Some(tcp) => {
+      let buf : FixedArray[Byte] = FixedArray::make(len, 0x00)
+      let n = try {
+        tcp.read(buf, max_len=len)
+      } catch {
+        err => return Err(S7Error::transport("Receive failed: \{err.to_string()}"))
+      }
+      let result : Array[Byte] = []
+      let cnt = if n < 0 { 0 } else { n }
+      for i in 0..<cnt {
+        result.push(buf[i])
+      }
+      Ok(result)
+    }
   }
-  Ok(result)
 }
 
 ///|

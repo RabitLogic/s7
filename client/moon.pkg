@@ -1,0 +1,6 @@
+import {
+  "RabitLogic/s7/core",
+  "RabitLogic/s7/protocol",
+  "RabitLogic/s7/transport",
+  "RabitLogic/s7/utils",
+}

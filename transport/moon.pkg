@@ -1,6 +1,7 @@
 import {
-  "RabitLogic/s7/src",
-  "RabitLogic/s7/src/protocol",
+  "RabitLogic/s7/core",
+  "RabitLogic/s7/protocol",
+  "moonbitlang/async/io",
   "moonbitlang/async/socket",
 }
 

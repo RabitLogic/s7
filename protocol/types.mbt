@@ -127,7 +127,7 @@ pub enum CpuStatus {
   Unknown
   Stop
   Run
-}
+} derive(Show)
 
 ///|
 pub fn CpuStatus::from_u8(v : Byte) -> CpuStatus {

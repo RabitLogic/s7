@@ -235,7 +235,7 @@ fn f32_from_bytes(b : Array[Byte]) -> Double {
 }
 
 ///|
-fn f32_to_bytes(val : Double) -> Array[Byte] {
+pub fn f32_to_bytes(val : Double) -> Array[Byte] {
   if val == 0.0 {
     return [0x00, 0x00, 0x00, 0x00]
   }
@@ -276,12 +276,12 @@ fn f64_from_bytes(b : Array[Byte]) -> Double {
   if exp == 1024 {
     return if sign > 0.0 { 1.0 / 0.0 } else { -1.0 / 0.0 }
   }
-  let mv = 1.0 + (mh * 4294967296.0 + ml) / 18446744073709551616.0
+  let mv = 1.0 + (mh * 4294967296.0 + ml) / 4503599627370496.0
   sign * mv * pow2(exp)
 }
 
 ///|
-fn f64_to_bytes(val : Double) -> Array[Byte] {
+pub fn f64_to_bytes(val : Double) -> Array[Byte] {
   if val == 0.0 {
     return Array::make(8, 0x00)
   }
@@ -290,9 +290,9 @@ fn f64_to_bytes(val : Double) -> Array[Byte] {
   let ev = ilog2_floor(av)
   let eb = ev + 1023
   let mn = av / pow2(ev)
-  let mi = ((mn - 1.0) * 4503599627370496.0).round().to_int()
-  let hm = (mi >> 20) & 0xFFFFF
-  let lm = mi & 0xFFFFF
+  let mi64 : Int64 = ((mn - 1.0) * 4503599627370496.0).round().to_int64()
+  let hm = ((mi64 >> 32) & 0xFFFFFL).to_int()
+  let lm = (mi64 & 0xFFFFFFFFL).to_int()
   let hi = (sb << 31) | (eb << 20) | hm
   let lo = lm
   [

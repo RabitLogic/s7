@@ -1,8 +1,8 @@
 ///|
-pub type S7Result[T] = @src.S7Result[T]
+pub type S7Result[T] = @core.S7Result[T]
 
 ///|
-pub type S7Error = @src.S7Error
+pub type S7Error = @core.S7Error
 
 // Transport trait - pluggable async transport abstraction
 

@@ -2,6 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![MoonBit](https://img.shields.io/badge/MoonBit-0.10%2B-blue)](https://moonbitlang.com)
+[![Version](https://img.shields.io/badge/version-0.2.0-2ea44f)]()
 
 A pure MoonBit implementation of the Siemens S7 communication protocol for PLC devices.
 
@@ -16,46 +17,42 @@ A pure MoonBit implementation of the Siemens S7 communication protocol for PLC d
 - ✅ **PDU Chunking** — Automatic large read/write splitting
 - ✅ **Field Types** — `BoolField`, `WordField`, `FloatField`, `DoubleField` with `Field` trait
 - ✅ **Field Collections** — `FieldValue` enum for heterogeneous field arrays
-- ✅ **Async I/O** — Powered by `moonbitlang/async` official library
-- ✅ **Cross-platform** — Linux, macOS, Windows (via async), WASM/JS (stub)
+- ✅ **100% Official Async I/O** — transport runs entirely on `moonbitlang/async` (@io), no raw FFI, no C stubs
+- ✅ **Cross-platform** — Linux, macOS, Windows (native), WASM/JS (stub)
 
 ## Quick Start
 
 ### Add dependency
 
-```toml
-# moon.mod
-import {
-  "RabitLogic/s7",
-}
+```sh
+moon add RabitLogic/s7
 ```
 
 ### Basic usage
 
 ```moonbit
-fn main {
-  // Create client with default config (192.168.0.1:102)
-  let cl = S7Client::new()
+import "RabitLogic/s7/client"
+import "RabitLogic/s7/transport"
 
-  // Connect to PLC
-  cl.connect() as? conn
+async fn main {
+  // Create client with default config (192.168.0.1:102)
+  let cl = @client.S7Client::new()
+
+  // Connect to PLC (TCP + COTP + PDU negotiation)
+  let conn = match cl.connect() {
+    Err(e) => {
+      println("connect failed: \{e.to_string()}")
+      return
+    }
+    Ok(c) => c
+  }
   defer conn.disconnect() // auto-disconnect on scope exit
 
   // Read 10 bytes from DB 1, starting at offset 0
-  let data = conn.ag_read(1, 0, 10) as?
-  println("Read \{data.length()} bytes")
-
-  // Write data to DB 1
-  conn.ag_write(1, 0, b"\x01\x02\x03") as?
-
-  // PLC control
-  conn.plc_start() as?
-  let status = conn.plc_status() as?
-  println("CPU status: \{status}")
-
-  // Diagnostics
-  let info = conn.cpu_info() as?
-  println("Module: \{info.module_type_name}")
+  match conn.ag_read(1, 0, 10) {
+    Err(e) => println("read failed: \{e.to_string()}")
+    Ok(data) => println("Read \{data.length()} bytes")
+  }
 }
 ```
 
@@ -133,7 +130,7 @@ for f in fields {
 │  │      TcpConnection            │  │
 │  │  ┌─────────────────────────┐  │  │
 │  │  │  @socket.Tcp (async)    │  │  │
-│  │  │  + FD-based FFI I/O    │  │  │
+│  │  │  + @io read/write       │  │  │
 │  │  └─────────────────────────┘  │  │
 │  └───────────────────────────────┘  │
 │  ┌───────────────────────────────┐  │
@@ -154,23 +151,27 @@ for f in fields {
 ```
 s7/
 ├── moon.mod                # Module configuration
-├── src/
-│   ├── lib.mbt             # Version info
+├── core/
 │   ├── error.mbt           # S7Error + S7Result
-│   ├── client/
-│   │   └── client.mbt      # S7Client (15 async methods)
-│   ├── transport/
-│   │   ├── transport.mbt   # Transport trait + ConnType
-│   │   ├── tcp.mbt         # TcpConnection (native: FFI + async)
-│   │   ├── tcp_stub.mbt    # Stub (WASM/JS)
-│   │   └── cotp.mbt        # CotpConnection
-│   └── protocol/
-│       ├── types.mbt       # DataType, Area, CpuStatus, CpuInfo, CPInfo
-│       ├── items.mbt       # ReadItem, WriteItem
-│       ├── s7comm.mbt      # PDU encode/decode, SZL, PLC control
-│       ├── field.mbt       # BoolField, WordField, FloatField, DoubleField
-│       └── constant.mbt    # WL_*, TS_*, Area hex, data_size_byte
-└── examples/
+│   └── lib.mbt             # Version info
+├── client/
+│   └── client.mbt          # S7Client (15 async methods)
+├── transport/
+│   ├── transport.mbt       # Transport trait + ConnType
+│   ├── tcp.mbt             # TcpConnection (native: official async @io)
+│   ├── tcp_stub.mbt        # Stub (WASM/JS)
+│   └── cotp.mbt            # CotpConnection
+├── protocol/
+│   ├── types.mbt           # DataType, Area, CpuStatus, CpuInfo, CPInfo
+│   ├── items.mbt           # ReadItem, WriteItem
+│   ├── s7comm.mbt          # PDU encode/decode, SZL, PLC control
+│   ├── field.mbt           # BoolField, WordField, FloatField, DoubleField
+│   └── constant.mbt        # WL_*, TS_*, Area hex, data_size_byte
+├── utils/
+│   └── helpers.mbt         # err_to_string, hex_dump, cpu_status_to_string
+├── tools/
+│   └── s7_sim.py           # Local S7 PLC simulator for testing
+└── test_plc/
     └── main.mbt            # Demo program
 ```
 
@@ -178,9 +179,9 @@ s7/
 
 | Target | Status | Backend |
 |--------|--------|---------|
-| Linux | ✅ | native (async TCP + FFI I/O) |
-| macOS | ✅ | native (async TCP + FFI I/O) |
-| Windows | ✅ | native (async TCP + FFI I/O, MinGW) |
+| Linux | ✅ | native (official `moonbitlang/async` @io) |
+| macOS | ✅ | native (official `moonbitlang/async` @io) |
+| Windows | ✅ | native (official `moonbitlang/async` @io) |
 | WASM/JS | ✅ | stub (compile-only placeholder) |
 
 ## Comparison with Rust s7
@@ -196,8 +197,8 @@ The MoonBit S7 library is fully feature-aligned with the [Rust s7](https://githu
 | PLC Control | start/stop/restart/plc_status | ✅ plc_start/stop/restart/plc_status |
 | SZL | cpu_info/cp_info | ✅ cpu_info/cp_info |
 | COTP | embedded in TCP | ✅ independent `CotpConnection` |
-| I/O model | sync blocking | ⚡ async |
-| Cross-platform | std library | async + FFI |
+| I/O model | sync blocking | ⚡ async (`moonbitlang/async` @io) |
+| Cross-platform | std library | official async library (no FFI, no C stubs) |
 
 ## License
 
