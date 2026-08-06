@@ -237,6 +237,29 @@ The simulator serves a simulated `DB200` whose first bytes are initialized to
 `0x00, 0x11, 0x22, ...`; the demo writes `0xAA 0xBB` to it and reads it back to
 confirm persistence.
 
+### Connectivity & firewall notes
+
+When testing against a real PLC or a VM on your LAN, `ping` often fails even
+though the device is reachable at layer 2 (ARP works) — usually because the
+Windows firewall blocks ICMP echo. To allow ping on a Windows target
+(verified):
+
+```sh
+netsh advfirewall firewall add rule name="Allow ICMPv4" protocol=icmpv4:8,any dir=in action=allow
+```
+
+To also allow the S7 protocol itself (ISO-on-TCP, port 102) inbound on that
+machine:
+
+```sh
+netsh advfirewall firewall add rule name="Allow S7 ISO-TCP 102" dir=in action=allow protocol=TCP localport=102
+```
+
+> Tip: if a VM is not reachable at the expected LAN address, check its virtual
+> NIC mode. In **NAT** mode the VM sits on a different subnet (e.g. VMware
+> `VMnet8` = `192.168.47.x`) and a static LAN IP like `192.168.1.11` won't be
+> reachable — switch the NIC to **Bridged** mode so it joins the host LAN.
+
 ## License
 
 MIT License — see [LICENSE](LICENSE)
