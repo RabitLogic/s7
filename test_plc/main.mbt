@@ -52,61 +52,69 @@ async fn diag(host : String) -> Unit {
     }
   }
 
-  // === DB200 read/write test (non-destructive: restores original) ===
-  println("\n--- DB200 read/write test ---")
-  // Snapshot original bytes 0..16
-  let orig = match conn.ag_read(200, 0, 16) {
-    Err(e) => {
-      println("   snapshot read error: \{@utils.err_to_string(e)}")
-      return
-    }
-    Ok(b) => b
-  }
-  println("   original[0..16]: \{@utils.hex_dump(orig)}")
-
-  // Test pattern: signal=true, status=false, index=5, code="ABC"
-  //   byte0=0x01 (signal bit0), byte1=0x00 (status bit1),
-  //   byte2-3=0x0005 (index=5), byte4-5=FE 03 + 'A''B''C' (code), rest 0
-  let test_data : Array[Byte] = [
-    0x01, 0x00, 0x00, 0x05,
-    0xFE, 0x03, 0x41, 0x42, 0x43,
+  // === DB200 write test (persistent — values are NOT restored) ===
+  println("\n--- DB200 write test (persistent) ---")
+  // Offset 0: structured fields — signal=true, status=false, index=5, code="ABC"
+  let data0 : Array[Byte] = [
+    0x01, 0x00, 0x00, 0x05, // signal(bit0)=1, status(bit1)=0, index=5
+    0xFE, 0x03, 0x41, 0x42, 0x43, // code: max=254, len=3, "ABC"
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
   ]
-  match conn.ag_write(200, 0, test_data) {
-    Err(e) => println("   write error: \{@utils.err_to_string(e)}")
-    Ok(_) => println("   ✅ write OK")
+  match conn.ag_write(200, 0, data0) {
+    Err(e) => println("   write@0 error: \{@utils.err_to_string(e)}")
+    Ok(_) => println("   ✅ write@0 (16B): signal=true, index=5, code=ABC")
   }
-  match conn.ag_read(200, 0, 16) {
+  // Offset 16: 16-byte ascending pattern
+  let data16 : Array[Byte] = [
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+  ]
+  match conn.ag_write(200, 16, data16) {
+    Err(e) => println("   write@16 error: \{@utils.err_to_string(e)}")
+    Ok(_) => println("   ✅ write@16 (16B): 10 11 12 ... 1F")
+  }
+  // Offset 40: 8-byte pattern
+  let data40 : Array[Byte] = [
+    0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04,
+  ]
+  match conn.ag_write(200, 40, data40) {
+    Err(e) => println("   write@40 error: \{@utils.err_to_string(e)}")
+    Ok(_) => println("   ✅ write@40 (8B): DE AD BE EF 01 02 03 04")
+  }
+  // Read back 48 bytes and verify all three regions
+  match conn.ag_read(200, 0, 48) {
     Err(e) => println("   read-back error: \{@utils.err_to_string(e)}")
     Ok(b) => {
-      let mut same = b.length() == test_data.length()
-      if same {
-        for i in 0..<b.length() {
-          if b[i] != test_data[i] {
-            same = false
-          }
+      println("   read-back[0..48]: \{@utils.hex_dump(b)}")
+      let mut same0 = true
+      for i in 0..<data0.length() {
+        if b[i] != data0[i] {
+          same0 = false
         }
       }
-      println("   read-back[0..16]: \{@utils.hex_dump(b)}")
-      println("   write verified: \{same}")
+      println("   verify @0  : \{same0}")
+      let mut same16 = true
+      for i in 0..<data16.length() {
+        if b[16 + i] != data16[i] {
+          same16 = false
+        }
+      }
+      println("   verify @16 : \{same16}")
+      let mut same40 = true
+      for i in 0..<data40.length() {
+        if b[40 + i] != data40[i] {
+          same40 = false
+        }
+      }
+      println("   verify @40 : \{same40}")
     }
-  }
-
-  // Restore original values
-  match conn.ag_write(200, 0, orig) {
-    Err(e) => println("   restore write error: \{@utils.err_to_string(e)}")
-    Ok(_) => println("   ✅ restored original")
-  }
-  match conn.ag_read(200, 0, 16) {
-    Err(e) => println("   restored read error: \{@utils.err_to_string(e)}")
-    Ok(b) => println("   restored[0..16]: \{@utils.hex_dump(b)}")
   }
   conn.disconnect()
 }
 
 ///|
 async fn main {
-  println("DB200 structured read against real PLCSIM")
+  println("DB200 persistent write test against real PLCSIM")
   diag("192.168.1.40")
   println("\n🎉 Done")
 }
