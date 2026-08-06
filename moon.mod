@@ -1,6 +1,6 @@
 name = "RabitLogic/s7"
 
-version = "0.2.2"
+version = "0.2.3"
 
 description = "MoonBit S7 Communication Protocol Library for Siemens PLC"
 
