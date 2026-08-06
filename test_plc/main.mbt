@@ -104,6 +104,83 @@ async fn diag(host : String) -> Unit {
       println("   large write verified: \{same} (\{b.length()} bytes read back)")
     }
   }
+
+  // === Typed data types test (scratch area @100, inside code padding) ===
+  println("\n--- typed data types (Int16/Word/DInt/DWord/Real/Real64/bits) ---")
+  let typed : Array[Byte] = []
+  typed.append([0x30, 0x39]) // Int16 @100 = 12345
+  typed.append([0xD4, 0x31]) // Word  @102 = 54321
+  typed.append([0xFF, 0xFE, 0x79, 0x60]) // DInt @104 = -100000
+  typed.append([0xEE, 0x6B, 0x28, 0x00]) // DWord @108 = 4000000000
+  typed.append(@protocol.f32_to_bytes(3.14)) // Real @112 = 3.14
+  typed.append(@protocol.f64_to_bytes(-2.5)) // Real64 @116 = -2.5
+  typed.append([0x05]) // bits @124: bit0=1, bit1=0, bit2=1
+  match conn.ag_write(200, 100, typed) {
+    Err(e) => println("   typed write error: \{@utils.err_to_string(e)}")
+    Ok(_) => println("   ✅ typed write OK (25B @100)")
+  }
+  // Int16 @100
+  match conn.ag_read(200, 100, 2) {
+    Err(e) => println("   Int16 read error: \{@utils.err_to_string(e)}")
+    Ok(b) => {
+      let u = (b[0].to_int() << 8) | b[1].to_int()
+      let v = if u >= 32768 { u - 65536 } else { u }
+      println("   Int16 @100 = \{v} (expect 12345) → \{v == 12345}")
+    }
+  }
+  // Word @102
+  match conn.ag_read(200, 102, 2) {
+    Err(e) => println("   Word read error: \{@utils.err_to_string(e)}")
+    Ok(b) => {
+      let wf = @protocol.WordField::new(200, 102, b)
+      println("   Word  @102 = \{wf.value()} (expect 54321) → \{wf.value() == 54321}")
+    }
+  }
+  // DInt @104
+  match conn.ag_read(200, 104, 4) {
+    Err(e) => println("   DInt read error: \{@utils.err_to_string(e)}")
+    Ok(b) => {
+      let u = (b[0].to_int() << 24) | (b[1].to_int() << 16) | (b[2].to_int() << 8) | b[3].to_int()
+      println("   DInt  @104 = \{u} (expect -100000) → \{u == -100000}")
+    }
+  }
+  // DWord @108
+  match conn.ag_read(200, 108, 4) {
+    Err(e) => println("   DWord read error: \{@utils.err_to_string(e)}")
+    Ok(b) => {
+      let u = (b[0].to_int() << 24) | (b[1].to_int() << 16) | (b[2].to_int() << 8) | b[3].to_int()
+      println("   DWord @108 = \{u} (expect 4000000000) → \{u == 0xEE6B2800}")
+    }
+  }
+  // Real @112
+  match conn.ag_read(200, 112, 4) {
+    Err(e) => println("   Real read error: \{@utils.err_to_string(e)}")
+    Ok(b) => {
+      let ff = @protocol.FloatField::new(200, 112, b)
+      let ok = (ff.value() - 3.14).abs() < 0.001
+      println("   Real  @112 = \{ff.value()} (expect ~3.14) → \{ok}")
+    }
+  }
+  // Real64 @116
+  match conn.ag_read(200, 116, 8) {
+    Err(e) => println("   Real64 read error: \{@utils.err_to_string(e)}")
+    Ok(b) => {
+      let df = @protocol.DoubleField::new(200, 116, b)
+      let ok = (df.value() - -2.5).abs() < 0.001
+      println("   Real64@116 = \{df.value()} (expect -2.5) → \{ok}")
+    }
+  }
+  // bits @124
+  match conn.ag_read(200, 124, 1) {
+    Err(e) => println("   bits read error: \{@utils.err_to_string(e)}")
+    Ok(b) => {
+      let b0 = @protocol.BoolField::from_byte(200, 124, 0, b[0])
+      let b1 = @protocol.BoolField::from_byte(200, 124, 1, b[0])
+      let b2 = @protocol.BoolField::from_byte(200, 124, 2, b[0])
+      let okbits = b0.value() && (b1.value() == false) && b2.value()
+      println("   bits @124: bit0=\{b0.value()} (T), bit1=\{b1.value()} (F), bit2=\{b2.value()} (T) → \{okbits}")
+    }
+  }
   conn.disconnect()
 }
 
