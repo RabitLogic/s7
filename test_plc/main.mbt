@@ -2,13 +2,13 @@
 /// Run the PLC test - wrapped so main() can call it
 async fn run_test() -> Unit {
   let cfg = @transport.TcpConfig::new(
-    host="172.16.152.131",
+    host="192.168.47.140",
     port=102,
     rack=0,
     slot=1,
   )
   let cl = @client.S7Client::new_with_config(cfg)
-  println("🔌 Connecting to PLC at 172.16.152.131:102 ...")
+  println("🔌 Connecting to PLC at 192.168.47.140:102 ...")
 
   // Connect
   let conn = match cl.connect() {

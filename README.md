@@ -231,7 +231,7 @@ moon run test_plc --target native
 The demo program verifies the whole stack end-to-end: connect, `plc_status` (RUN),
 `cpu_info` (module type / serial / AS name / copyright / module name), DB read,
 DB write and read-back, and a non-zero-offset read. To test against your own PLC,
-edit `host`/`port` in `test_plc/main.mbt` (defaults to `172.16.152.131:102`).
+edit `host`/`port` in `test_plc/main.mbt` (currently set to `192.168.47.140:102`).
 
 The simulator serves a simulated `DB200` whose first bytes are initialized to
 `0x00, 0x11, 0x22, ...`; the demo writes `0xAA 0xBB` to it and reads it back to
