@@ -51,6 +51,56 @@ async fn diag(host : String) -> Unit {
       println("   code = '\{s}'")
     }
   }
+
+  // === DB200 read/write test (non-destructive: restores original) ===
+  println("\n--- DB200 read/write test ---")
+  // Snapshot original bytes 0..16
+  let orig = match conn.ag_read(200, 0, 16) {
+    Err(e) => {
+      println("   snapshot read error: \{@utils.err_to_string(e)}")
+      return
+    }
+    Ok(b) => b
+  }
+  println("   original[0..16]: \{@utils.hex_dump(orig)}")
+
+  // Test pattern: signal=true, status=false, index=5, code="ABC"
+  //   byte0=0x01 (signal bit0), byte1=0x00 (status bit1),
+  //   byte2-3=0x0005 (index=5), byte4-5=FE 03 + 'A''B''C' (code), rest 0
+  let test_data : Array[Byte] = [
+    0x01, 0x00, 0x00, 0x05,
+    0xFE, 0x03, 0x41, 0x42, 0x43,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  ]
+  match conn.ag_write(200, 0, test_data) {
+    Err(e) => println("   write error: \{@utils.err_to_string(e)}")
+    Ok(_) => println("   ✅ write OK")
+  }
+  match conn.ag_read(200, 0, 16) {
+    Err(e) => println("   read-back error: \{@utils.err_to_string(e)}")
+    Ok(b) => {
+      let mut same = b.length() == test_data.length()
+      if same {
+        for i in 0..<b.length() {
+          if b[i] != test_data[i] {
+            same = false
+          }
+        }
+      }
+      println("   read-back[0..16]: \{@utils.hex_dump(b)}")
+      println("   write verified: \{same}")
+    }
+  }
+
+  // Restore original values
+  match conn.ag_write(200, 0, orig) {
+    Err(e) => println("   restore write error: \{@utils.err_to_string(e)}")
+    Ok(_) => println("   ✅ restored original")
+  }
+  match conn.ag_read(200, 0, 16) {
+    Err(e) => println("   restored read error: \{@utils.err_to_string(e)}")
+    Ok(b) => println("   restored[0..16]: \{@utils.hex_dump(b)}")
+  }
   conn.disconnect()
 }
 
