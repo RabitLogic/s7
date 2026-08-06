@@ -183,7 +183,7 @@ pub fn build_read_pdu(
   let pkt : Array[Byte] = Array::make(tlen, 0x00)
   pkt[0] = 0x03
   pkt[1] = 0x00
-  pkt[2] = hi8(tlen >> 8)
+  pkt[2] = hi8(tlen)
   pkt[3] = lo8(tlen)
   let mut off = 4
   for i in 0..<cd.length() {
@@ -264,7 +264,7 @@ pub fn build_write_pdu(
   let pkt : Array[Byte] = Array::make(tlen, 0x00)
   pkt[0] = 0x03
   pkt[1] = 0x00
-  pkt[2] = hi8(tlen >> 8)
+  pkt[2] = hi8(tlen)
   pkt[3] = lo8(tlen)
   let mut off = 4
   for i in 0..<cd.length() {
@@ -396,7 +396,7 @@ pub fn build_cotp_cr(lsap : Array[Byte], rsap : Array[Byte]) -> Array[Byte] {
   let pkt : Array[Byte] = Array::make(total, 0x00)
   pkt[0] = 0x03
   pkt[1] = 0x00
-  pkt[2] = hi8(total >> 8)
+  pkt[2] = hi8(total)
   pkt[3] = lo8(total)
   pkt[4] = 0x11
   pkt[5] = 0xE0

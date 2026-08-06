@@ -74,6 +74,26 @@ test "build_read_write_pdu" {
 }
 
 ///|
+/// A large write (> 255 bytes) must encode the TPKT length correctly.
+/// Regression test: hi8(tlen >> 8) double-shifted and produced 0x00 for the
+/// high byte when the packet exceeded 255 bytes, so the PLC truncated the
+/// frame and closed the connection.
+test "build_write_pdu large tpkt length" {
+  let big : Array[Byte] = Array::make(256, 0x00)
+  let witems = [WriteItem::db(200, 260, DataType::byte_array(256), big)]
+  match build_write_pdu(witems, 3) {
+    Err(e) => fail("build failed: \{e}")
+    Ok(pdu) => {
+      let tlen = (pdu[2].to_int() << 8) | pdu[3].to_int()
+      inspect(tlen, content="291")
+      inspect(pdu.length(), content="291")
+      // TPKT length must equal the actual packet size
+      inspect(tlen == pdu.length(), content="true")
+    }
+  }
+}
+
+///|
 test "build_read_multiple_items" {
   let items = [
     ReadItem::db(1, 0, DataType::byte()),

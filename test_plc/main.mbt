@@ -1,4 +1,14 @@
 ///|
+fn make_s7_str_field(s : String) -> Array[Byte] {
+  // Build a full 256-byte S7 String field: [max_len, cur_len, chars..., zeros]
+  let b = @protocol.encode_s7_string(254, s)
+  while b.length() < 256 {
+    b.push(0x00)
+  }
+  b
+}
+
+///|
 async fn diag(host : String) -> Unit {
   let cfg = @transport.TcpConfig::new(
     host=host,
@@ -52,62 +62,37 @@ async fn diag(host : String) -> Unit {
     }
   }
 
-  // === DB200 write test (persistent — values are NOT restored) ===
-  println("\n--- DB200 write test (persistent) ---")
-  // Offset 0: structured fields — signal=true, status=false, index=5,
-  // code is written directly as a string "ABC" (encoded to S7 String).
-  let data0 : Array[Byte] = [0x01, 0x00, 0x00, 0x05]
-  data0.append(@protocol.encode_s7_string(254, "ABC"))
-  while data0.length() < 16 {
-    data0.push(0x00)
+  // === DB200 size probe (confirm new test[] structure is live) ===
+  println("\n--- DB200 size probe ---")
+  let offs = [256, 512, 768, 1024, 1280, 1536, 1792]
+  for off in offs {
+    match conn.ag_read(200, off, 8) {
+      Err(e) => println("   @\{off}: FAIL (\{@utils.err_to_string(e)})")
+      Ok(b) => println("   @\{off}: \{@utils.hex_dump(b)}")
+    }
   }
-  match conn.ag_write(200, 0, data0) {
-    Err(e) => println("   write@0 error: \{@utils.err_to_string(e)}")
-    Ok(_) => println("   ✅ write@0 (16B): signal=true, index=5, code=ABC")
+
+  // === DB200 test[] string-array write (persistent) ===
+  // test[i] starts at 260 + i*256 (each String = 256 bytes, max 254).
+  println("\n--- test[] string-array write ---")
+  for i in 0..<6 {
+    let off = 260 + i * 256
+    match conn.ag_write(200, off, make_s7_str_field("T\{i}")) {
+      Err(e) => println("   write test[\{i}]@\{off} error: \{@utils.err_to_string(e)}")
+      Ok(_) => println("   ✅ test[\{i}]@\{off} = \"T\{i}\"")
+    }
   }
-  // Offset 16: 16-byte ascending pattern
-  let data16 : Array[Byte] = [
-    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
-    0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-  ]
-  match conn.ag_write(200, 16, data16) {
-    Err(e) => println("   write@16 error: \{@utils.err_to_string(e)}")
-    Ok(_) => println("   ✅ write@16 (16B): 10 11 12 ... 1F")
-  }
-  // Offset 40: 8-byte pattern
-  let data40 : Array[Byte] = [
-    0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04,
-  ]
-  match conn.ag_write(200, 40, data40) {
-    Err(e) => println("   write@40 error: \{@utils.err_to_string(e)}")
-    Ok(_) => println("   ✅ write@40 (8B): DE AD BE EF 01 02 03 04")
-  }
-  // Read back 48 bytes and verify all three regions
-  match conn.ag_read(200, 0, 48) {
-    Err(e) => println("   read-back error: \{@utils.err_to_string(e)}")
-    Ok(b) => {
-      println("   read-back[0..48]: \{@utils.hex_dump(b)}")
-      let mut same0 = true
-      for i in 0..<data0.length() {
-        if b[i] != data0[i] {
-          same0 = false
-        }
+  // Read back the test[] headers and verify each string
+  for i in 0..<6 {
+    let off = 260 + i * 256
+    match conn.ag_read(200, off, 4) {
+      Err(e) => println("   read test[\{i}] error: \{@utils.err_to_string(e)}")
+      Ok(b) => {
+        let cur = b[1].to_int()
+        // expect "T\{i}" → chars 'T'(0x54) + digit (0x30+i)
+        let ok = b[0].to_int() == 254 && cur == 2 && b[2].to_int() == 84 && b[3].to_int() == 0x30 + i
+        println("   test[\{i}]@\{off}: \{@utils.hex_dump(b)}  verify: \{ok}")
       }
-      println("   verify @0  : \{same0}")
-      let mut same16 = true
-      for i in 0..<data16.length() {
-        if b[16 + i] != data16[i] {
-          same16 = false
-        }
-      }
-      println("   verify @16 : \{same16}")
-      let mut same40 = true
-      for i in 0..<data40.length() {
-        if b[40 + i] != data40[i] {
-          same40 = false
-        }
-      }
-      println("   verify @40 : \{same40}")
     }
   }
   conn.disconnect()
@@ -115,7 +100,7 @@ async fn diag(host : String) -> Unit {
 
 ///|
 async fn main {
-  println("DB200 persistent write test against real PLCSIM")
+  println("DB200 test[] string-array write against real PLCSIM")
   diag("192.168.1.40")
   println("\n🎉 Done")
 }
