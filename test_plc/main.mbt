@@ -120,37 +120,24 @@ async fn diag(host : String) -> Unit {
     Ok(_) => println("   ✅ typed write OK (25B @100)")
   }
   // Int16 @100
-  match conn.ag_read(200, 100, 2) {
+  match conn.ag_read_int(200, 100) {
     Err(e) => println("   Int16 read error: \{@utils.err_to_string(e)}")
-    Ok(b) => {
-      let u = (b[0].to_int() << 8) | b[1].to_int()
-      let v = if u >= 32768 { u - 65536 } else { u }
-      println("   Int16 @100 = \{v} (expect 12345) → \{v == 12345}")
-    }
+    Ok(v) => println("   Int16 @100 = \{v} (expect 12345) → \{v == 12345}")
   }
   // Word @102
-  match conn.ag_read(200, 102, 2) {
+  match conn.ag_read_word(200, 102) {
     Err(e) => println("   Word read error: \{@utils.err_to_string(e)}")
-    Ok(b) => {
-      let wf = @protocol.WordField::new(200, 102, b)
-      println("   Word  @102 = \{wf.value()} (expect 54321) → \{wf.value() == 54321}")
-    }
+    Ok(v) => println("   Word  @102 = \{v} (expect 54321) → \{v == 54321}")
   }
   // DInt @104
-  match conn.ag_read(200, 104, 4) {
+  match conn.ag_read_dint(200, 104) {
     Err(e) => println("   DInt read error: \{@utils.err_to_string(e)}")
-    Ok(b) => {
-      let u = (b[0].to_int() << 24) | (b[1].to_int() << 16) | (b[2].to_int() << 8) | b[3].to_int()
-      println("   DInt  @104 = \{u} (expect -100000) → \{u == -100000}")
-    }
+    Ok(v) => println("   DInt  @104 = \{v} (expect -100000) → \{v == -100000}")
   }
-  // DWord @108
-  match conn.ag_read(200, 108, 4) {
+  // DWord @108 — unsigned, now correctly 4000000000 via Int64
+  match conn.ag_read_dword(200, 108) {
     Err(e) => println("   DWord read error: \{@utils.err_to_string(e)}")
-    Ok(b) => {
-      let u = (b[0].to_int() << 24) | (b[1].to_int() << 16) | (b[2].to_int() << 8) | b[3].to_int()
-      println("   DWord @108 = \{u} (expect 4000000000) → \{u == 0xEE6B2800}")
-    }
+    Ok(v) => println("   DWord @108 = \{v} (expect 4000000000) → \{v == 4000000000L}")
   }
   // Real @112
   match conn.ag_read(200, 112, 4) {

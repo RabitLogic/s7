@@ -133,6 +133,93 @@ pub async fn S7Client::ag_write_string(
   }
 }
 
+// ===== DB typed-value convenience =====
+
+///|
+/// Read a signed 16-bit Int field (S7 INT). Returns the signed value.
+pub async fn S7Client::ag_read_int(self : Self, db : Int, start : Int) -> S7Result[Int] {
+  match chunked_read(self, @protocol.Area::db(db), start, 2) {
+    Err(e) => Err(e)
+    Ok(b) => {
+      let u = (b[0].to_int() << 8) | b[1].to_int()
+      Ok(if u >= 32768 { u - 65536 } else { u })
+    }
+  }
+}
+
+///|
+/// Write a signed 16-bit Int (S7 INT) as 2 big-endian bytes.
+pub async fn S7Client::ag_write_int(
+  self : Self,
+  db : Int,
+  start : Int,
+  value : Int,
+) -> S7Result[Unit] {
+  let v = if value < 0 { value + 65536 } else { value }
+  chunked_write(self, @protocol.Area::db(db), start, [((v >> 8) & 0xFF).to_byte(), (v & 0xFF).to_byte()])
+}
+
+///|
+/// Read an unsigned 16-bit Word field (S7 WORD).
+pub async fn S7Client::ag_read_word(self : Self, db : Int, start : Int) -> S7Result[Int] {
+  match chunked_read(self, @protocol.Area::db(db), start, 2) {
+    Err(e) => Err(e)
+    Ok(b) => Ok((b[0].to_int() << 8) | b[1].to_int())
+  }
+}
+
+///|
+/// Write an unsigned 16-bit Word (S7 WORD) as 2 big-endian bytes.
+pub async fn S7Client::ag_write_word(
+  self : Self,
+  db : Int,
+  start : Int,
+  value : Int,
+) -> S7Result[Unit] {
+  chunked_write(self, @protocol.Area::db(db), start, [((value >> 8) & 0xFF).to_byte(), (value & 0xFF).to_byte()])
+}
+
+///|
+/// Read a signed 32-bit DInt field (S7 DINT).
+pub async fn S7Client::ag_read_dint(self : Self, db : Int, start : Int) -> S7Result[Int] {
+  match chunked_read(self, @protocol.Area::db(db), start, 4) {
+    Err(e) => Err(e)
+    Ok(b) => Ok(@protocol.DIntField::new(db, start, b).value())
+  }
+}
+
+///|
+/// Write a signed 32-bit DInt (S7 DINT) as 4 big-endian bytes.
+pub async fn S7Client::ag_write_dint(
+  self : Self,
+  db : Int,
+  start : Int,
+  value : Int,
+) -> S7Result[Unit] {
+  chunked_write(self, @protocol.Area::db(db), start, @protocol.dint_to_bytes(value))
+}
+
+///|
+/// Read an unsigned 32-bit DWord field (S7 DWORD) as an `Int64`
+/// (covers 0 .. 2^32-1; MoonBit `Int` is only 32-bit signed).
+pub async fn S7Client::ag_read_dword(self : Self, db : Int, start : Int) -> S7Result[Int64] {
+  match chunked_read(self, @protocol.Area::db(db), start, 4) {
+    Err(e) => Err(e)
+    Ok(b) => Ok(@protocol.DWordField::new(db, start, b).value())
+  }
+}
+
+///|
+/// Write an unsigned 32-bit DWord (S7 DWORD, value as Int64) as 4 big-endian bytes.
+pub async fn S7Client::ag_write_dword(
+  self : Self,
+  db : Int,
+  start : Int,
+  value : Int64,
+) -> S7Result[Unit] {
+  chunked_write(self, @protocol.Area::db(db), start, @protocol.dword_to_bytes(value))
+}
+
 // ===== Process Inputs =====
 
 ///|

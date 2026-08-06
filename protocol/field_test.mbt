@@ -56,6 +56,50 @@ test "WordField edge cases" {
 }
 
 ///|
+test "DIntField" {
+  // -100000 = 0xFFFE7960
+  let df = DIntField::new(1, 0, [0xFF, 0xFE, 0x79, 0x60])
+  inspect(df.value(), content="-100000")
+  inspect(DIntField::size(), content="4")
+  inspect(df.db_number(), content="1")
+  inspect(df.offset(), content="0")
+  // Round-trip
+  let df2 = DIntField::new(1, 0, df.to_bytes())
+  inspect(df2.value(), content="-100000")
+  // Max / min
+  let dmax = DIntField::new(1, 0, [0x7F, 0xFF, 0xFF, 0xFF])
+  inspect(dmax.value(), content="2147483647")
+  let dmin = DIntField::new(1, 0, [0x80, 0x00, 0x00, 0x00])
+  inspect(dmin.value(), content="-2147483648")
+}
+
+///|
+test "DWordField" {
+  // 4000000000 = 0xEE6B2800 (unsigned, fits in Int64 but not signed Int32)
+  let dw = DWordField::new(1, 0, [0xEE, 0x6B, 0x28, 0x00])
+  inspect(dw.value(), content="4000000000")
+  inspect(DWordField::size(), content="4")
+  inspect(dw.db_number(), content="1")
+  // Round-trip
+  let dw2 = DWordField::new(1, 0, dw.to_bytes())
+  inspect(dw2.value(), content="4000000000")
+  // Max unsigned
+  let dwm = DWordField::new(1, 0, [0xFF, 0xFF, 0xFF, 0xFF])
+  inspect(dwm.value(), content="4294967295")
+  // dword_to_bytes / dint_to_bytes encode correctly
+  let dwb = dword_to_bytes(4000000000L)
+  inspect(dwb[0].to_int(), content="238")
+  inspect(dwb[1].to_int(), content="107")
+  inspect(dwb[2].to_int(), content="40")
+  inspect(dwb[3].to_int(), content="0")
+  let dib = dint_to_bytes(-100000)
+  inspect(dib[0].to_int(), content="255")
+  inspect(dib[1].to_int(), content="254")
+  inspect(dib[2].to_int(), content="121")
+  inspect(dib[3].to_int(), content="96")
+}
+
+///|
 test "FloatField" {
   let ff = FloatField::new(1, 0, [0x42, 0x68, 0x00, 0x00])
   inspect(ff.value(), content="58")

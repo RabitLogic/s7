@@ -70,6 +70,10 @@ async fn main {
 | `async ag_write(db, start, data)` | Write to data block |
 | `async ag_read_string(db, start, max_len)` | Read an S7 STRING field → `String` |
 | `async ag_write_string(db, start, max_len, value)` | Write a `String` to an S7 STRING field (UTF-8) |
+| `async ag_read_int(db, start)` / `ag_write_int` | Read/write signed 16-bit Int |
+| `async ag_read_word(db, start)` / `ag_write_word` | Read/write unsigned 16-bit Word |
+| `async ag_read_dint(db, start)` / `ag_write_dint` | Read/write signed 32-bit DInt |
+| `async ag_read_dword(db, start)` / `ag_write_dword` | Read/write unsigned 32-bit DWord (`Int64`) |
 | `async eb_read/eb_write` | Read/write process inputs (E/A) |
 | `async ab_read/ab_write` | Read/write process outputs (A/A) |
 | `async mb_read/mb_write` | Read/write flags/markers (M) |
@@ -101,6 +105,25 @@ Protocol helpers (also used internally):
 | `@protocol.decode_s7_string(bytes) -> String` | Decode raw S7 STRING bytes → `String` |
 | `@protocol.StringField::new(db, off, max_len, value)` | Structured string field |
 | `StringField::to_bytes()` / `from_bytes(db, off, max_len, data)` / `value()` | Encode/decode field |
+
+### Working with numeric fields
+
+MoonBit's `Int` is 32-bit signed, so unsigned 32-bit values (S7 DWORD)
+need `Int64`. Use the typed accessors:
+
+```moonbit
+// signed 32-bit
+let di = conn.ag_read_dint(200, 104)          // -> Int (-100000)
+let _ = conn.ag_write_dint(200, 104, -100000)
+
+// unsigned 32-bit — correctly returns 4000000000 (not a negative wrap)
+let dw = conn.ag_read_dword(200, 108)         // -> Int64 (4000000000)
+let _ = conn.ag_write_dword(200, 108, 4000000000L)
+```
+
+Protocol field types: `BoolField` (bit), `WordField` (u16), `DIntField` (i32),
+`DWordField` (u32 → `Int64`), `FloatField` (f32), `DoubleField` (f64),
+`StringField`.
 
 ### TcpConfig
 

@@ -124,6 +124,128 @@ pub fn WordField::size() -> Int {
   2
 }
 
+// ===== DIntField (signed 32-bit) =====
+
+///|
+/// Signed 32-bit integer field (S7 DInt). MoonBit `Int` is 32-bit signed,
+/// so this covers the full signed range -2^31 .. 2^31-1.
+pub struct DIntField {
+  db_num : Int
+  offset_val : Int
+  value_val : Int
+}
+
+///|
+pub fn DIntField::new(db : Int, offset : Int, bytes : Array[Byte]) -> DIntField {
+  let val = if bytes.length() >= 4 { dint_from_bytes(bytes) } else { 0 }
+  { db_num: db, offset_val: offset, value_val: val }
+}
+
+///|
+pub fn DIntField::value(self : DIntField) -> Int {
+  self.value_val
+}
+
+///|
+pub fn DIntField::db_number(self : DIntField) -> Int {
+  self.db_num
+}
+
+///|
+pub fn DIntField::offset(self : DIntField) -> Int {
+  self.offset_val
+}
+
+///|
+pub fn DIntField::to_bytes(self : DIntField) -> Array[Byte] {
+  dint_to_bytes(self.value_val)
+}
+
+///|
+pub fn DIntField::size() -> Int {
+  4
+}
+
+// ===== DWordField (unsigned 32-bit, Int64) =====
+
+///|
+/// Unsigned 32-bit integer field (S7 DWord). The value is stored as `Int64`
+/// so it covers the full unsigned range 0 .. 2^32-1 (MoonBit `Int` is only
+/// 32-bit signed and would wrap values > 2^31).
+pub struct DWordField {
+  db_num : Int
+  offset_val : Int
+  value_val : Int64
+}
+
+///|
+pub fn DWordField::new(db : Int, offset : Int, bytes : Array[Byte]) -> DWordField {
+  let val = if bytes.length() >= 4 { dword_from_bytes(bytes) } else { 0L }
+  { db_num: db, offset_val: offset, value_val: val }
+}
+
+///|
+pub fn DWordField::value(self : DWordField) -> Int64 {
+  self.value_val
+}
+
+///|
+pub fn DWordField::db_number(self : DWordField) -> Int {
+  self.db_num
+}
+
+///|
+pub fn DWordField::offset(self : DWordField) -> Int {
+  self.offset_val
+}
+
+///|
+pub fn DWordField::to_bytes(self : DWordField) -> Array[Byte] {
+  dword_to_bytes(self.value_val)
+}
+
+///|
+pub fn DWordField::size() -> Int {
+  4
+}
+
+// ===== 32-bit encode/decode helpers =====
+
+///|
+/// Decode 4 big-endian bytes into an unsigned 32-bit value (Int64).
+fn dword_from_bytes(b : Array[Byte]) -> Int64 {
+  let b0 = b[0].to_int().to_int64()
+  let b1 = b[1].to_int().to_int64()
+  let b2 = b[2].to_int().to_int64()
+  let b3 = b[3].to_int().to_int64()
+  (b0 << 24) | (b1 << 16) | (b2 << 8) | b3
+}
+
+///|
+/// Encode an unsigned 32-bit value (Int64) as 4 big-endian bytes.
+pub fn dword_to_bytes(val : Int64) -> Array[Byte] {
+  [
+    ((val >> 24) & 0xFF).to_byte(),
+    ((val >> 16) & 0xFF).to_byte(),
+    ((val >> 8) & 0xFF).to_byte(),
+    (val & 0xFF).to_byte(),
+  ]
+}
+
+///|
+/// Decode 4 big-endian bytes into a signed 32-bit value (Int).
+fn dint_from_bytes(b : Array[Byte]) -> Int {
+  let u = dword_from_bytes(b)
+  let s = if u >= 0x80000000L { u - 0x100000000L } else { u }
+  s.to_int()
+}
+
+///|
+/// Encode a signed 32-bit value (Int) as 4 big-endian bytes.
+pub fn dint_to_bytes(val : Int) -> Array[Byte] {
+  dword_to_bytes(val.to_int64() & 0xFFFFFFFFL)
+}
+
 // ===== FloatField (IEEE 754 f32) =====
 
 ///|
