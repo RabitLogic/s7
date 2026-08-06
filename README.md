@@ -260,6 +260,13 @@ netsh advfirewall firewall add rule name="Allow S7 ISO-TCP 102" dir=in action=al
 > `VMnet8` = `192.168.47.x`) and a static LAN IP like `192.168.1.11` won't be
 > reachable — switch the NIC to **Bridged** mode so it joins the host LAN.
 
+> Note: S7-1200/1500 DBs are **optimized by default** ("Optimized block access").
+> Optimized DBs **cannot be read/written with absolute addresses** — the PLC
+> returns an "item not found" error for every client using absolute addressing
+> (this library and nodes7 alike). To access them, disable "Optimized block
+> access" in the DB properties in TIA Portal and download to the PLC again, or
+> use symbolic access.
+
 ## License
 
 MIT License — see [LICENSE](LICENSE)

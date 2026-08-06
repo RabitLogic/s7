@@ -41,41 +41,51 @@ async fn run_test() -> Unit {
     }
   }
 
-  // Test DB200 read
-  println("\n📖 Reading DB200 (10 bytes) ...")
-  match conn.ag_read(200, 0, 10) {
-    Err(e) => println("⚠️  DB200 read error: \{@utils.err_to_string(e)}")
-    Ok(data) => {
-      println("✅ Read \{data.length().to_string()} bytes from DB200:")
-      println("   Hex: \{@utils.hex_dump(data)}")
+  // === DB200 structured read (READ-ONLY) ===
+  // DB layout: signal:Bool@0.0, status:Bool@0.1, index:Int@2, code:String@4
+  println("\n📖 Reading DB200 structured fields ...")
+
+  // bytes 0..1 -> signal (bit 0), status (bit 1)
+  match conn.ag_read(200, 0, 2) {
+    Err(e) => println("⚠️  DB200 bool read error: \{@utils.err_to_string(e)}")
+    Ok(b) => {
+      let signal = @protocol.BoolField::from_byte(200, 0, 0, b[0])
+      let status = @protocol.BoolField::from_byte(200, 0, 1, b[0])
+      println("✅ signal = \{signal.value()}")
+      println("✅ status = \{status.value()}")
     }
   }
 
-  // Test DB200 write
-  println("\n✏️  Writing 2 bytes to DB200 (offset 0) ...")
-  match conn.ag_write(200, 0, [0xAA, 0xBB]) {
-    Err(e) => println("⚠️  DB200 write error: \{@utils.err_to_string(e)}")
-    Ok(_) => println("✅ Write successful!")
-  }
-
-  // Read back to verify
-  println("\n📖 Verifying DB200 after write ...")
-  match conn.ag_read(200, 0, 10) {
-    Err(e) => println("⚠️  DB200 verify read error: \{@utils.err_to_string(e)}")
-    Ok(data) => {
-      println("✅ Verified: \{data.length().to_string()} bytes from DB200:")
-      println("   Hex: \{@utils.hex_dump(data)}")
+  // bytes 2..3 -> index (S7 Int, big-endian signed 16-bit)
+  match conn.ag_read(200, 2, 2) {
+    Err(e) => println("⚠️  DB200 index read error: \{@utils.err_to_string(e)}")
+    Ok(b) => {
+      let u = @protocol.WordField::new(200, 2, b).value()
+      let idx = if u >= 32768 { u - 65536 } else { u }
+      println("✅ index = \{idx}")
     }
   }
 
-  // Non-zero offset read (validates the 3-byte item address encoding)
-  println("\n📖 Reading DB200 offset 4 (4 bytes) ...")
-  match conn.ag_read(200, 4, 4) {
-    Err(e) => println("⚠️  DB200 offset-4 read error: \{@utils.err_to_string(e)}")
-    Ok(data) => {
-      println("✅ Read \{data.length().to_string()} bytes at offset 4:")
-      println("   Hex: \{@utils.hex_dump(data)}")
+  // bytes 4.. -> code (S7 String: [max_len, cur_len, chars...])
+  match conn.ag_read(200, 4, 32) {
+    Err(e) => println("⚠️  DB200 code read error: \{@utils.err_to_string(e)}")
+    Ok(b) => {
+      let cur = b[1].to_int()
+      let mut s = ""
+      for i in 2..<b.length() {
+        if i - 2 >= cur {
+          break
+        }
+        s = s + b[i].to_string()
+      }
+      println("✅ code = '\{s}'")
     }
+  }
+
+  // Raw dump for reference
+  match conn.ag_read(200, 0, 40) {
+    Err(e) => println("⚠️  DB200 raw read error: \{@utils.err_to_string(e)}")
+    Ok(data) => println("   raw[0..40]: \{@utils.hex_dump(data)}")
   }
 
   println("\n🎉 Test complete!")
