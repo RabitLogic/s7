@@ -96,8 +96,22 @@ fn ts_from_wl(wl : Int) -> Byte {
 }
 
 ///|
-fn mk_hdr(mt : Byte, refn : Int, plen : Int, dlen : Int) -> Array[Byte] {
-  let b : Array[Byte] = Array::make(10, 0x00)
+/// Encode a MoonBit string into the S7 STRING layout `[max_len, cur_len, chars...]`
+/// used by S7 STRING DB fields (chars are UTF-8 encoded).
+pub fn encode_s7_string(max_len : Int, s : String) -> Array[Byte] {
+  let buf = @buffer.Buffer()
+  buf.write_string_utf8(s)
+  let chars = buf.to_bytes().to_array()
+  let cur = if chars.length() > max_len { max_len } else { chars.length() }
+  let r : Array[Byte] = [max_len.to_byte(), cur.to_byte()]
+  for i in 0..<cur {
+    r.push(chars[i])
+  }
+  r
+}
+
+///|
+fn mk_hdr(mt : Byte, refn : Int, plen : Int, dlen : Int) -> Array[Byte] {  let b : Array[Byte] = Array::make(10, 0x00)
   b[0] = PID
   b[1] = mt
   b[2] = 0x00

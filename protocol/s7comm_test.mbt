@@ -31,6 +31,22 @@ test "build_cotp_cr custom_tsap" {
 }
 
 ///|
+test "encode_s7_string" {
+  // "ABC" → max=254, len=3, 0x41 0x42 0x43 (UTF-8 / ASCII)
+  let s = encode_s7_string(254, "ABC")
+  inspect(s.length(), content="5")
+  inspect(s[0].to_int(), content="254")
+  inspect(s[1].to_int(), content="3")
+  inspect(s[2].to_int(), content="65")
+  inspect(s[3].to_int(), content="66")
+  inspect(s[4].to_int(), content="67")
+  // Truncation to max_len
+  let t = encode_s7_string(2, "ABCDE")
+  inspect(t.length(), content="4")
+  inspect(t[1].to_int(), content="2")
+}
+
+///|
 test "build_read_write_pdu" {
   let items = [ReadItem::db(1, 0, DataType::byte())]
   let r = build_read_pdu(items, 1)

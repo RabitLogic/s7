@@ -54,12 +54,13 @@ async fn diag(host : String) -> Unit {
 
   // === DB200 write test (persistent — values are NOT restored) ===
   println("\n--- DB200 write test (persistent) ---")
-  // Offset 0: structured fields — signal=true, status=false, index=5, code="ABC"
-  let data0 : Array[Byte] = [
-    0x01, 0x00, 0x00, 0x05, // signal(bit0)=1, status(bit1)=0, index=5
-    0xFE, 0x03, 0x41, 0x42, 0x43, // code: max=254, len=3, "ABC"
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  ]
+  // Offset 0: structured fields — signal=true, status=false, index=5,
+  // code is written directly as a string "ABC" (encoded to S7 String).
+  let data0 : Array[Byte] = [0x01, 0x00, 0x00, 0x05]
+  data0.append(@protocol.encode_s7_string(254, "ABC"))
+  while data0.length() < 16 {
+    data0.push(0x00)
+  }
   match conn.ag_write(200, 0, data0) {
     Err(e) => println("   write@0 error: \{@utils.err_to_string(e)}")
     Ok(_) => println("   ✅ write@0 (16B): signal=true, index=5, code=ABC")
