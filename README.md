@@ -18,6 +18,7 @@ A pure MoonBit implementation of the Siemens S7 communication protocol for PLC d
 - ✅ **Field Types** — `BoolField`, `WordField`, `FloatField`, `DoubleField` with `Field` trait
 - ✅ **Field Collections** — `FieldValue` enum for heterogeneous field arrays
 - ✅ **100% Official Async I/O** — transport runs entirely on `moonbitlang/async` (@io), no raw FFI, no C stubs
+- ✅ **Robust transport** — TPKT-framed reads via `read_exactly` (handles partial TCP segments and large responses), with configurable connect/read/write timeouts
 - ✅ **Cross-platform** — Linux, macOS, Windows (native), WASM/JS (stub)
 
 ## Quick Start
@@ -64,7 +65,7 @@ async fn main {
 |--------|-------------|
 | `new()` / `new_with_config(c)` | Create client |
 | `async connect()` | Connect to PLC (TCP + COTP + PDU negotiation) |
-| `async disconnect()` | Disconnect |
+| `disconnect()` | Disconnect |
 | `async ag_read(db, start, size)` | Read from data block (DB) |
 | `async ag_write(db, start, data)` | Write to data block |
 | `async eb_read/eb_write` | Read/write process inputs (E/A) |
@@ -88,6 +89,7 @@ async fn main {
 | `connect_timeout` | `5000` | Connection timeout (ms) |
 | `read_timeout` | `5000` | Read timeout (ms) |
 | `write_timeout` | `5000` | Write timeout (ms) |
+| `use_tls` | `false` | TLS (reserved for future use) |
 | `local_tsap` | `[0x01, 0x00]` | Local TSAP |
 | `remote_tsap` | `[0x01, 0x01]` | Remote TSAP |
 
@@ -199,6 +201,41 @@ The MoonBit S7 library is fully feature-aligned with the [Rust s7](https://githu
 | COTP | embedded in TCP | ✅ independent `CotpConnection` |
 | I/O model | sync blocking | ⚡ async (`moonbitlang/async` @io) |
 | Cross-platform | std library | official async library (no FFI, no C stubs) |
+
+## Testing
+
+### Unit tests
+
+```sh
+moon test
+```
+
+### Functional test against a simulated PLC
+
+The repository ships a small Python S7 simulator (`tools/s7_sim.py`) that emulates a
+Siemens PLC over the wire: TCP + COTP handshake, PDU-size negotiation, PLC status,
+SZL (CPU info) reads, and DB read/write. You can exercise the full client against it
+without real hardware:
+
+```sh
+# 1. Start the simulator (listens on 127.0.0.1:102)
+python tools/s7_sim.py 127.0.0.1 102
+
+# 2. Point test_plc at the simulator and run it (native target!)
+moon run test_plc --target native
+```
+
+> `test_plc` is a native-only executable — you must pass `--target native`
+> (the default WASM target does not support it).
+
+The demo program verifies the whole stack end-to-end: connect, `plc_status` (RUN),
+`cpu_info` (module type / serial / AS name / copyright / module name), DB read,
+DB write and read-back, and a non-zero-offset read. To test against your own PLC,
+edit `host`/`port` in `test_plc/main.mbt` (defaults to `172.16.152.131:102`).
+
+The simulator serves a simulated `DB200` whose first bytes are initialized to
+`0x00, 0x11, 0x22, ...`; the demo writes `0xAA 0xBB` to it and reads it back to
+confirm persistence.
 
 ## License
 

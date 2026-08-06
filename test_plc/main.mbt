@@ -68,6 +68,16 @@ async fn run_test() -> Unit {
     }
   }
 
+  // Non-zero offset read (validates the 3-byte item address encoding)
+  println("\n📖 Reading DB200 offset 4 (4 bytes) ...")
+  match conn.ag_read(200, 4, 4) {
+    Err(e) => println("⚠️  DB200 offset-4 read error: \{@utils.err_to_string(e)}")
+    Ok(data) => {
+      println("✅ Read \{data.length().to_string()} bytes at offset 4:")
+      println("   Hex: \{@utils.hex_dump(data)}")
+    }
+  }
+
   println("\n🎉 Test complete!")
 }
 

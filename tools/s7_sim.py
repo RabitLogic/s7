@@ -29,73 +29,146 @@ def build_cotp_cc(src_ref: int = 0x0000, dst_ref: int = 0x0001) -> bytes:
     ])
 
 def build_setup_resp(refn: int = 1, pdu_size: int = 480) -> bytes:
-    """Build S7 Setup Communication response."""
+    """Build a standard S7 Setup Communication response (Ack-Data).
+
+    Layout (28 bytes):
+      TPKT(4) COTP(3) S7hdr(10) params(2: error class/code) data(9)
+      The negotiated PDU size is read by the client at index [25..26].
+    """
     return bytes([
-        0x03, 0x00, 0x00, 0x1C,  # TPKT len=28
+        0x03, 0x00, 0x00, 0x1C,  # TPKT len = 28
         0x02, 0xF0, 0x80,        # COTP DT
         0x32,                    # S7 PID
-        0x01,                    # msg type = ack
+        0x03,                    # msg type = Ack-Data
         0x00, 0x00,              # reserved
         (refn >> 8) & 0xFF, refn & 0xFF,  # ref number
-        0x00, 0x00,              # param len
-        0x00, 0x07,              # data len = 7
-        0x00, 0x0F, 0x00, 0x00, # data
-        0x01, 0x00, 0x01, 0x00,
-        0x01, (pdu_size >> 8) & 0xFF, pdu_size & 0xFF,  # PDU size
-        0x00, 0x0A,
+        0x00, 0x02,              # param len = 2 (error class/code)
+        0x00, 0x09,              # data len = 9
+        0x00, 0x00,              # error class / code = 0
+        0xF0,                    # function = setup
+        0x00, 0x00,              # reserved
+        0x01, 0x00,              # max calling length = 0x0001
+        0x01,                    # max called length hi
+        (pdu_size >> 8) & 0xFF, pdu_size & 0xFF,  # PDU size @ [25..26]
+        0x00,                    # padding
     ])
 
 def build_read_resp(data: bytes, refn: int = 1) -> bytes:
-    """Build S7 Read response matching MoonBit's parse_response().
-    
-    CRITICAL: parse_response reads param_len from s7+5/6 (off-by-one!)
-    and data_len from s7+7/8. So the S7 header bytes are shifted."""
+    """Build a standard S7 Read response (Ack-Data, single item).
+
+    Real-PLC layout (matches Rust s7 / snap7):
+      TPKT(4) COTP(3) S7hdr(10) params(4: error class/code + reserved)
+      data(4: return code, transport size, length) + payload
+      → return code at index 21, payload starting at index 25.
+    """
     dlen = len(data)
-    total_data_len = 4 + dlen  # 4-byte data header + actual data
-    
-    # TPKT(4) + COTP_DT(3) + S7_HDR(10) + data_hdr(4) + data(dlen)
-    total_pkt = 4 + 3 + 10 + 4 + dlen
-    tpkt_hi = (total_pkt >> 8) & 0xFF
-    tpkt_lo = total_pkt & 0xFF
-    
-    total_data_hi = (total_data_len >> 8) & 0xFF
-    total_data_lo = total_data_len & 0xFF
-    
-    # S7 header at offset 7:
-    # [0]=PID, [1]=msg_type, [2-3]=reserved
-    # [4]=ref_hi, [5]=ref_lo(->plen_hi), [6]=plen_hi(->plen_lo)
-    # [7]=plen_lo(->dlen_hi), [8]=dlen_hi(->dlen_lo), [9]=dlen_lo
-    resp = bytearray([
-        0x03, 0x00, tpkt_hi, tpkt_lo,  # TPKT
+    total_data_len = 4 + dlen            # 4-byte item header + payload
+    total_pkt = 4 + 3 + 10 + 4 + total_data_len
+    return bytes([
+        0x03, 0x00, (total_pkt >> 8) & 0xFF, total_pkt & 0xFF,  # TPKT
         0x02, 0xF0, 0x80,               # COTP DT
         0x32,                            # s7+0: PID
-        0x07,                            # s7+1: msg_type = user data (avoids parse_response bug treating 0x03 as error)
+        0x03,                            # s7+1: msg type = Ack-Data
         0x00, 0x00,                      # s7+2/3: reserved
-        (refn >> 8) & 0xFF,             # s7+4: ref_hi
-        0x00,                            # s7+5: ref_lo → parse reads as plen_hi
-        0x00,                            # s7+6: plen_hi → parse reads as plen_lo
-        total_data_hi,                   # s7+7: plen_lo → parse reads as dlen_hi
-        total_data_lo,                   # s7+8: dlen_hi → parse reads as dlen_lo
-        0x00,                            # s7+9: dlen_lo (unused)
+        (refn >> 8) & 0xFF, refn & 0xFF, # s7+4/5: PDU ref
+        0x00, 0x04,                      # s7+6/7: param length = 4
+        0x00, total_data_len,            # s7+8/9: data length = 4 + dlen
+        0x00, 0x00,                      # error class / code = 0
+        0x00, 0x00,                      # reserved (params)
         0xFF,                            # return code = OK
         0x04,                            # transport size = byte
         (dlen >> 8) & 0xFF, dlen & 0xFF, # data length
-    ])
-    resp.extend(data)
-    return bytes(resp)
+    ]) + data
 
 def build_write_resp(refn: int = 1) -> bytes:
-    """Build S7 Write response (acknowledgement)."""
+    """Build a standard S7 Write response (Ack-Data)."""
+    # TPKT(4) COTP(3) S7hdr(10) params(0) data(4: return code + padding)
     return bytes([
-        0x03, 0x00, 0x00, 0x1C,  # TPKT len=28
+        0x03, 0x00, 0x00, 0x15,  # TPKT len = 21
         0x02, 0xF0, 0x80,        # COTP DT
-        0x32, 0x03, 0x00, 0x00,
+        0x32, 0x03, 0x00, 0x00,  # PID, Ack-Data, reserved
         (refn >> 8) & 0xFF, refn & 0xFF,
-        0x00, 0x00, 0x00, 0x06,
-        0xFF, 0x04, 0x00, 0x01,  # data header
-        0x00,                    # return code = OK
-        0x00, 0x00, 0x00,        # padding
+        0x00, 0x00,              # param len = 0
+        0x00, 0x04,              # data len = 4
+        0xFF, 0x00, 0x00, 0x00,  # return code = OK + padding
     ])
+
+
+def build_plc_status_resp(refn: int, status: int = 0x08) -> bytes:
+    """Build a standard S7 PLC status response (45 bytes).
+
+    The status byte (0x08 = RUN, 0x04/0x07 = STOP) lives at index 44,
+    which is where the client's parse_plc_status reads it.
+    """
+    resp = bytearray(45)
+    resp[0:4] = bytes([0x03, 0x00, 0x00, 45])
+    resp[4:7] = bytes([0x02, 0xF0, 0x80])
+    resp[7] = 0x32
+    resp[8] = 0x07  # userdata
+    resp[11:13] = bytes([(refn >> 8) & 0xFF, refn & 0xFF])
+    resp[13:15] = bytes([0x00, 0x08])  # param len = 8
+    resp[15:17] = bytes([0x00, 0x08])  # data len = 8
+    resp[18] = 0x01
+    resp[19] = 0x12
+    resp[20] = 0x04
+    resp[21] = 0x11
+    resp[22] = 0x44
+    resp[23] = 0x01
+    resp[25] = 0xFF
+    resp[26] = 0x09
+    resp[28] = 0x04
+    resp[29] = 0x04
+    resp[30] = 0x24
+    resp[44] = status
+    return bytes(resp)
+
+
+def build_szl_resp(refn: int, szl_id: int) -> bytes:
+    """Build a standard S7 SZL first response with a 205-byte CPU-info payload.
+
+    The SZL payload starts at index 41 (matches the client's parse_szl_first)
+    and the CPU-info fields are placed at the offsets used by parse_cpu_info
+    (as_name@2, module_name@36, copyright@104, serial@138, module_type@172).
+    """
+    payload = bytearray(205)
+    asn = b"MOONBIT-AS"
+    payload[2:2 + len(asn)] = asn
+    mn = b"CPU1214C-DEMO"
+    payload[36:36 + len(mn)] = mn
+    cp = b"Copyright MoonBit 2026"
+    payload[104:104 + len(cp)] = cp
+    sn = b"SZ-00000001"
+    payload[138:138 + len(sn)] = sn
+    mt = b"CPU 1214C"
+    payload[172:172 + len(mt)] = mt
+
+    szl_data_size = len(payload)        # 205
+    total_len = 41 + szl_data_size      # 246
+    data_szl_field = szl_data_size + 8  # 213 (client/Rust: read_u16 - 8)
+
+    resp = bytearray(total_len)
+    resp[0:4] = bytes([0x03, 0x00, (total_len >> 8) & 0xFF, total_len & 0xFF])
+    resp[4:7] = bytes([0x02, 0xF0, 0x80])
+    resp[7] = 0x32
+    resp[8] = 0x07  # userdata
+    resp[11:13] = bytes([(refn >> 8) & 0xFF, refn & 0xFF])
+    resp[13:15] = bytes([0x00, 0x08])  # param len = 8
+    resp[15:17] = bytes([0x00, 4 + szl_data_size])
+    resp[18] = 0x01
+    resp[19] = 0x12
+    resp[20] = 0x08
+    resp[21] = 0x12  # function = read SZL
+    resp[22] = 0x44  # sub
+    resp[23] = 0x01
+    resp[25] = 0xFF
+    resp[26] = 0x00  # done flag
+    resp[27:29] = bytes([0x00, 4 + szl_data_size])
+    resp[29] = 0xFF
+    resp[31:33] = bytes([(data_szl_field >> 8) & 0xFF, data_szl_field & 0xFF])
+    resp[37:39] = bytes([0x00, 0x02])  # header length (x2 => 4)
+    resp[39:41] = bytes([0x00, 0x01])  # record count
+    resp[41:] = payload
+    return bytes(resp)
 
 def find_s7_header(data: bytes) -> int:
     """Find S7 protocol header (PID 0x32 followed by valid msg type)."""
@@ -146,6 +219,18 @@ def handle_s7_request(req: dict) -> bytes | None:
     item_count = params[1]
     print(f"    [debug] func={func:#x}, item_count={item_count}")
 
+    # Userdata requests (S7 msg type 0x07): SZL reads (cpu_info / cp_info)
+    # and PLC status. Detected via function 0x11 sub 0x44.
+    if func == 0x00 and len(params) >= 6 and params[1] == 0x01 and \
+       params[2] == 0x12 and params[4] == 0x11 and params[5] == 0x44:
+        wd = req['data']
+        if len(wd) >= 6 and wd[4] == 0x04 and wd[5] == 0x24:
+            print(f"    [debug] PLC status request")
+            return build_plc_status_resp(req['refn'])
+        szl_id = (wd[4] << 8) | wd[5] if len(wd) >= 6 else 0
+        print(f"    [debug] SZL request id=0x{szl_id:04x}")
+        return build_szl_resp(req['refn'], szl_id)
+
     if func == 0x04:  # Read
         results = []
         for i in range(item_count):
@@ -157,8 +242,10 @@ def handle_s7_request(req: dict) -> bytes | None:
             db_hi = params[off + 3]
             db_lo = params[off + 4]
             area = params[off + 5]
-            byte_off = (params[off + 6] << 8) | params[off + 7]
-            bit_off = params[off + 8]
+            # 3-byte little-endian area address = (byte_offset << 3) | bit
+            addr = params[off + 6] | (params[off + 7] << 8) | (params[off + 8] << 16)
+            byte_off = addr >> 3
+            bit_off = addr & 0x07
             count = params[off + 11]
 
             db_num = (db_hi << 8) | db_lo
@@ -183,8 +270,10 @@ def handle_s7_request(req: dict) -> bytes | None:
             db_hi = params[off + 3]
             db_lo = params[off + 4]
             area = params[off + 5]
-            byte_off = (params[off + 6] << 8) | params[off + 7]
-            bit_off = params[off + 8]
+            # 3-byte little-endian area address = (byte_offset << 3) | bit
+            addr = params[off + 6] | (params[off + 7] << 8) | (params[off + 8] << 16)
+            byte_off = addr >> 3
+            bit_off = addr & 0x07
             count = params[off + 11]
 
             # Write data follows after params in the data section

@@ -67,15 +67,89 @@ pub fn TcpConnection::new(c : TcpConfig) -> TcpConnection {
 }
 
 ///|
+/// Write all bytes (async), converting any raised error to an S7 error.
+async fn write_all(tcp : @socket.Tcp, data : Array[Byte]) -> S7Result[Unit] {
+  try {
+    tcp.write(to_bytes(data))
+    Ok(())
+  } catch {
+    err => Err(S7Error::transport("Write failed: \{err.to_string()}"))
+  }
+}
+
+///|
+/// Read one complete ISO-on-TCP frame: the 4-byte TPKT header, then the rest
+/// of the payload. Uses `read_exactly` so partial TCP segments are handled
+/// correctly (no data loss on real networks or large responses).
+async fn read_tpkt(tcp : @socket.Tcp) -> S7Result[Array[Byte]] {
+  try {
+    let hdr = tcp.read_exactly(4)
+    if hdr[0] != 0x03 {
+      return Err(S7Error::invalid_pdu("Bad TPKT"))
+    }
+    let total = (hdr[2].to_int() << 8) | hdr[3].to_int()
+    if total < 4 {
+      return Err(S7Error::invalid_pdu("Invalid TPKT length"))
+    }
+    let body = tcp.read_exactly(total - 4)
+    let result : Array[Byte] = []
+    for i in 0..<4 {
+      result.push(hdr[i])
+    }
+    for i in 0..<body.length() {
+      result.push(body[i])
+    }
+    Ok(result)
+  } catch {
+    _ => Err(S7Error::connection_closed())
+  }
+}
+
+///|
+/// COTP Connection Request/Confirm + S7 Setup Communication negotiation.
+async fn negotiate(
+  local_tsap : Array[Byte],
+  remote_tsap : Array[Byte],
+  sock : @socket.Tcp,
+) -> S7Result[Int] {
+  // COTP Connection Request / Confirm
+  let cr = @protocol.build_cotp_cr(local_tsap, remote_tsap)
+  match write_all(sock, cr) {
+    Err(e) => return Err(e)
+    Ok(_) => ()
+  }
+  let cc = match read_tpkt(sock) {
+    Err(e) => return Err(e)
+    Ok(d) => d
+  }
+  let _cotp = match @protocol.parse_cotp_cc(cc) {
+    Err(e) => return Err(e)
+    Ok(tpdu) => tpdu
+  }
+
+  // S7 Setup Communication (PDU negotiation)
+  let spdu = @protocol.build_setup_pdu(1, 1, 1)
+  match write_all(sock, spdu) {
+    Err(e) => return Err(e)
+    Ok(_) => ()
+  }
+  let st = match read_tpkt(sock) {
+    Err(e) => return Err(e)
+    Ok(d) => d
+  }
+  @protocol.parse_setup_resp(st)
+}
+
+///|
 /// Full async negotiation: TCP connect → COTP CR/CC → S7 PDU setup
 pub async fn TcpConnection::connect(self : Self) -> S7Result[TcpConnection] {
   if self.connected {
     return Err(S7Error::already_connected())
   }
-  // 1. TCP connect via official async library
-  let sock = @socket.Tcp::connect_to_host(
-    self.config.host,
-    port=self.config.port,
+  // 1. TCP connect via official async library, bounded by the connect timeout
+  let c_res = @async.with_timeout_opt(
+    self.config.connect_timeout,
+    () => { @socket.Tcp::connect_to_host(self.config.host, port=self.config.port) },
   ) catch {
     err =>
       return Err(
@@ -84,75 +158,26 @@ pub async fn TcpConnection::connect(self : Self) -> S7Result[TcpConnection] {
         ),
       )
   }
+  let sock = match c_res {
+    None => return Err(S7Error::connection_timeout())
+    Some(s) => s
+  }
 
-  // 2. COTP Connection Request / Confirm
-  let cr = @protocol.build_cotp_cr(self.local_tsap, self.remote_tsap)
-  try {
-    sock.write(to_bytes(cr))
-  } catch {
-    err => {
+  // 2/3. COTP CR/CC + S7 PDU negotiation, bounded by the connect timeout.
+  // Reads use read_exactly so partial TCP segments are handled correctly.
+  let neg_res = @async.with_timeout_opt(self.config.connect_timeout) <| () => {
+    negotiate(self.local_tsap, self.remote_tsap, sock)
+  }
+  let pdu_size = match neg_res {
+    None => {
       sock.close()
-      return Err(S7Error::transport("COTP CR send failed: \{err.to_string()}"))
+      return Err(S7Error::connection_timeout())
     }
-  }
-  let cc_buf : FixedArray[Byte] = FixedArray::make(1024, 0x00)
-  let cc_n = try {
-    sock.read(cc_buf, max_len=1024)
-  } catch {
-    err => {
-      sock.close()
-      return Err(S7Error::transport("COTP CC recv failed: \{err.to_string()}"))
-    }
-  }
-  if cc_n < 4 {
-    sock.close()
-    return Err(S7Error::transport("COTP CC too short"))
-  }
-  let cc_data : Array[Byte] = []
-  for i in 0..<cc_n {
-    cc_data.push(cc_buf[i])
-  }
-  let _cotp = match @protocol.parse_cotp_cc(cc_data) {
-    Err(e) => {
+    Some(Ok(ps)) => ps
+    Some(Err(e)) => {
       sock.close()
       return Err(e)
     }
-    Ok(tpdu) => tpdu
-  }
-
-  // 3. S7 Setup Communication (PDU negotiation)
-  let spdu = @protocol.build_setup_pdu(1, 1, 1)
-  try {
-    sock.write(to_bytes(spdu))
-  } catch {
-    err => {
-      sock.close()
-      return Err(S7Error::transport("Setup PDU send failed: \{err.to_string()}"))
-    }
-  }
-  let st_buf : FixedArray[Byte] = FixedArray::make(1024, 0x00)
-  let st_n = try {
-    sock.read(st_buf, max_len=1024)
-  } catch {
-    err => {
-      sock.close()
-      return Err(S7Error::transport("Setup resp recv failed: \{err.to_string()}"))
-    }
-  }
-  if st_n < 4 {
-    sock.close()
-    return Err(S7Error::transport("Setup resp too short"))
-  }
-  let st_data : Array[Byte] = []
-  for i in 0..<st_n {
-    st_data.push(st_buf[i])
-  }
-  let pdu_size = match @protocol.parse_setup_resp(st_data) {
-    Err(e) => {
-      sock.close()
-      return Err(e)
-    }
-    Ok(ps) => ps
   }
 
   Ok({
@@ -195,39 +220,24 @@ pub async fn TcpConnection::send(
   match self.tcp {
     None => Err(S7Error::not_connected())
     Some(tcp) => {
-      try {
-        tcp.write(to_bytes(data))
-      } catch {
-        err => return Err(S7Error::transport("Send failed: \{err.to_string()}"))
+      // Write the request with a timeout
+      let wres = @async.with_timeout_opt(self.config.write_timeout) <| () => {
+        write_all(tcp, data)
       }
-      let hb : FixedArray[Byte] = FixedArray::make(4, 0x00)
-      let hn = try {
-        tcp.read(hb, max_len=4)
-      } catch {
-        err => return Err(S7Error::transport("Response too short: \{err.to_string()}"))
+      match wres {
+        None => return Err(S7Error::timeout("write timeout"))
+        Some(Ok(_)) => ()
+        Some(Err(e)) => return Err(e)
       }
-      if hn < 4 {
-        return Err(S7Error::transport("Response too short"))
+      // Read the full TPKT-framed response with a timeout
+      let rres = @async.with_timeout_opt(self.config.read_timeout) <| () => {
+        read_tpkt(tcp)
       }
-      let rl = (hb[2].to_int() << 8) | hb[3].to_int()
-      if rl < 4 {
-        return Err(S7Error::invalid_pdu("Invalid TPKT"))
+      match rres {
+        None => Err(S7Error::timeout("read timeout"))
+        Some(Ok(d)) => Ok(d)
+        Some(Err(e)) => Err(e)
       }
-      let bb : FixedArray[Byte] = FixedArray::make(rl - 4, 0x00)
-      let bn = try {
-        tcp.read(bb, max_len=rl - 4)
-      } catch {
-        err => return Err(S7Error::transport("Response read failed: \{err.to_string()}"))
-      }
-      let result : Array[Byte] = []
-      for i in 0..<4 {
-        result.push(hb[i])
-      }
-      let cnt = if bn < 0 { 0 } else { bn }
-      for i in 0..<cnt {
-        result.push(bb[i])
-      }
-      Ok(result)
     }
   }
 }
@@ -243,36 +253,38 @@ pub async fn TcpConnection::send_raw(
   match self.tcp {
     None => Err(S7Error::not_connected())
     Some(tcp) => {
-      try {
-        tcp.write(to_bytes(data))
-        Ok(data.length())
-      } catch {
-        err => Err(S7Error::transport("Send failed: \{err.to_string()}"))
+      let wres = @async.with_timeout_opt(self.config.write_timeout) <| () => {
+        write_all(tcp, data)
+      }
+      match wres {
+        None => Err(S7Error::timeout("write timeout"))
+        Some(Ok(_)) => Ok(data.length())
+        Some(Err(e)) => Err(e)
       }
     }
   }
 }
 
 ///|
-pub async fn TcpConnection::receive(self : Self, len : Int) -> S7Result[Array[Byte]] {
+pub async fn TcpConnection::receive(
+  self : Self,
+  _len : Int,
+) -> S7Result[Array[Byte]] {
   if !self.connected {
     return Err(S7Error::not_connected())
   }
   match self.tcp {
     None => Err(S7Error::not_connected())
     Some(tcp) => {
-      let buf : FixedArray[Byte] = FixedArray::make(len, 0x00)
-      let n = try {
-        tcp.read(buf, max_len=len)
-      } catch {
-        err => return Err(S7Error::transport("Receive failed: \{err.to_string()}"))
+      // Read the complete TPKT-framed response (handles partial segments)
+      let rres = @async.with_timeout_opt(self.config.read_timeout) <| () => {
+        read_tpkt(tcp)
       }
-      let result : Array[Byte] = []
-      let cnt = if n < 0 { 0 } else { n }
-      for i in 0..<cnt {
-        result.push(buf[i])
+      match rres {
+        None => Err(S7Error::timeout("read timeout"))
+        Some(Ok(d)) => Ok(d)
+        Some(Err(e)) => Err(e)
       }
-      Ok(result)
     }
   }
 }

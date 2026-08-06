@@ -3,10 +3,16 @@
 ///|
 test "build_setup_pdu" {
   let pdu = build_setup_pdu(1, 1, 1)
-  inspect(pdu.length(), content="22")
+  inspect(pdu.length(), content="25")
   // Verify TPKT header
   inspect(pdu[0].to_int(), content="3")
   inspect(pdu[1].to_int(), content="0")
+  // TPKT length field must equal the packet size
+  inspect(((pdu[2].to_int() << 8) | pdu[3].to_int()), content="25")
+  // Param length = 8, function = 0xF0, requested PDU = 480
+  inspect(((pdu[13].to_int() << 8) | pdu[14].to_int()), content="8")
+  inspect(pdu[17].to_int(), content="240")
+  inspect(((pdu[23].to_int() << 8) | pdu[24].to_int()), content="480")
 }
 
 ///|
@@ -64,28 +70,123 @@ test "build_read_multiple_items" {
 
 ///|
 test "PLC control PDUs" {
-  inspect(build_plc_start_pdu(1).length(), content="33")
+  inspect(build_plc_start_pdu(1).length(), content="39")
   inspect(build_plc_stop_pdu(2).length(), content="33")
-  inspect(build_plc_restart_pdu(1).length(), content="33")
+  inspect(build_plc_restart_pdu(1).length(), content="37")
   inspect(build_plc_status_pdu(1).length(), content="33")
   // Verify function codes
   let start = build_plc_start_pdu(1)
   inspect(start[7].to_int(), content="50") // 0x32 = PID
   inspect(start[8].to_int(), content="1") // 0x01 = request
+  inspect(start[17].to_int(), content="40") // 0x28 = PDU_START
+  inspect(start[14].to_int(), content="22") // param length = 22
+  let stop = build_plc_stop_pdu(1)
+  inspect(stop[17].to_int(), content="41") // 0x29 = PDU_STOP
   let status = build_plc_status_pdu(1)
-  inspect(status[8].to_int(), content="7") // 0x07 = read SZL
+  inspect(status[8].to_int(), content="7") // 0x07 = userdata
 }
 
 ///|
 test "SZL PDUs" {
   let szl = build_szl_first_pdu(1, 0x001C, 0x000)
   inspect(szl.length(), content="33")
-  // Check SZL ID in PDU
-  inspect(szl[26].to_int(), content="0") // high byte of 0x001C
-  inspect(szl[27].to_int(), content="28") // low byte of 0x001C
+  // Check SZL ID in PDU (at [29..30])
+  inspect(szl[29].to_int(), content="0") // high byte of 0x001C
+  inspect(szl[30].to_int(), content="28") // low byte of 0x001C
+  // Param length must be 8 (userdata header)
+  inspect(szl[14].to_int(), content="8")
 
   let next = build_szl_next_pdu(2, 1)
   inspect(next.length(), content="33")
+  inspect(next[24].to_int(), content="1") // sequence in
+}
+
+///|
+test "parse_szl_first" {
+  // Minimal valid SZL response: header + 2-byte payload starting at [41]
+  let resp : Array[Byte] = Array::make(43, 0x00)
+  resp[0] = 0x03
+  resp[37] = 0x00
+  resp[38] = 0x02 // header length field
+  resp[39] = 0x00
+  resp[40] = 0x01 // record count
+  resp[41] = 0xAB // payload[0]
+  resp[42] = 0xCD // payload[1]
+  match parse_szl_first(resp) {
+    Err(e) => fail("parse_szl_first error: \{e}")
+    Ok(s) => {
+      inspect(s.data.length(), content="2")
+      inspect(s.data[0].to_int(), content="171")
+      inspect(s.data[1].to_int(), content="205")
+      inspect(s.data_count, content="1")
+    }
+  }
+}
+
+///|
+/// A standard S7 Ack-Data read response (single item, param length 4,
+/// return code 0xFF at index 21, payload starting at index 25) is what a
+/// real PLC sends. It must parse to the payload bytes.
+///
+/// Bytes:
+///  03 00 00 1F 02 F0 80 32 03 00 00 00 00 00 04 00 06
+///  00 00 00 00 FF 04 00 02 41 42
+///  → payload = [0x41, 0x42] ("AB")
+test "parse_response standard ack-data" {
+  let resp : Array[Byte] = [
+    0x03, 0x00, 0x00, 0x1F,
+    0x02, 0xF0, 0x80,
+    0x32, 0x03, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x04, 0x00, 0x06,
+    0x00, 0x00, 0x00, 0x00,
+    0xFF, 0x04, 0x00, 0x02,
+    0x41, 0x42,
+  ]
+  match parse_response(resp) {
+    Err(e) => fail("parse_response returned error: \{e}")
+    Ok(items) => {
+      inspect(items.length(), content="1")
+      inspect(items[0].length(), content="2")
+      inspect(items[0][0].to_int(), content="65")
+      inspect(items[0][1].to_int(), content="66")
+    }
+  }
+}
+
+///|
+/// An error response (message type 0x83 = Ack-Data with the error flag set)
+/// must surface as a PlcError instead of being accepted.
+test "parse_response error flag" {
+  let resp : Array[Byte] = [
+    0x03, 0x00, 0x00, 0x17,
+    0x02, 0xF0, 0x80,
+    0x32, 0x83, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x03, 0x0A, 0x00, 0x00, 0x00, 0x00,
+  ]
+  match parse_response(resp) {
+    Err(S7Error::PlcError(_, _)) => ()
+    Err(other) => fail("expected PlcError, got \{other}")
+    Ok(_) => fail("error response should not parse as OK")
+  }
+}
+
+///|
+/// A read item for a non-zero byte offset must encode the address as
+/// (offset << 3) | bit as a little-endian 3-byte field. For DB 1, byte 1
+/// → addr = 8 → [0x08, 0x00, 0x00].
+test "read item address encoding" {
+  let items = [ReadItem::db(1, 1, DataType::byte_array(1))]
+  match build_read_pdu(items, 1) {
+    Err(e) => fail("build failed: \{e}")
+    Ok(pdu) => {
+      // Item starts at offset 7 (S7) + 10 (header) + 2 (func/count) = 19
+      inspect(pdu[19].to_int(), content="18") // var spec 0x12
+      inspect(pdu[25].to_int(), content="8") // addr low = 0x08
+      inspect(pdu[26].to_int(), content="0") // addr mid
+      inspect(pdu[27].to_int(), content="0") // addr high
+    }
+  }
 }
 
 ///|
@@ -161,49 +262,55 @@ test "parse_plc_status" {
 
 ///|
 test "parse_plc_ctrl_resp" {
-  // Success response
+  // Success response echoes PDU_START (0x28)
   let ok : Array[Byte] = Array::make(20, 0x00)
-  ok[17] = 0x12
+  ok[17] = 0x28
   ok[18] = 0x00
-  let r = parse_plc_ctrl_resp(ok)
+  let r = parse_plc_ctrl_resp(ok, 0x28, 0x02)
   inspect(r, content="Ok(())")
 
-  // Job pending
+  // Already in state (sub-code 0x02 = already running)
   let jp : Array[Byte] = Array::make(20, 0x00)
-  jp[17] = 0x12
+  jp[17] = 0x28
   jp[18] = 0x02
-  let j = parse_plc_ctrl_resp(jp)
+  let j = parse_plc_ctrl_resp(jp, 0x28, 0x02)
   inspect(j, content="Err(JobPending)")
 
+  // Wrong function code
+  let bad : Array[Byte] = Array::make(20, 0x00)
+  bad[17] = 0x12
+  let b = parse_plc_ctrl_resp(bad, 0x28, 0x02)
+  inspect(b is Err(_), content="true")
+
   // Too short
-  let short = parse_plc_ctrl_resp(Array::make(10, 0x00))
+  let short = parse_plc_ctrl_resp(Array::make(10, 0x00), 0x28, 0x02)
   inspect(short is Err(_), content="true")
 }
 
 ///|
 test "parse_response" {
-  // Build a minimal valid read response with S7 data
-  // S7 header layout (as parsed by parse_response):
-  //   s7+0: PID (0x32), s7+1: func, s7+2-3: reserved
-  //   s7+4: ref hi, s7+5: ref/plen_hi, s7+6: plen_lo,
-  //   s7+7: dlen_hi, s7+8: dlen_lo, s7+9: reserved
+  // Standard S7 Ack-Data read response (single item): param length 4,
+  // return code 0xFF at index 21, payload starting at index 25.
   let resp : Array[Byte] = [
     0x03, 0x00, 0x00, 0x1F, // TPKT (len=31)
     0x02, 0xF0, 0x80,       // COTP DT
-    0x32, 0x01,             // S7 PID + func (find_s7 matches here)
+    0x32, 0x03,             // S7 PID + msg type Ack-Data
     0x00, 0x00,             // reserved
-    0x00, 0x00,             // ref (s7+4/5) - low byte used as plen_hi by parse
-    0x00,                   // s7+6: plen_lo = 0
-    0x00,                   // s7+7: dlen_hi = 0
-    0x04,                   // s7+8: dlen_lo = 4
-    0x00,                   // s7+9
+    0x00, 0x01,             // PDU ref
+    0x00, 0x04,             // param length = 4
+    0x00, 0x08,             // data length = 8
+    0x00, 0x00, 0x00, 0x00, // error class/code + reserved (params)
     0xFF, 0x04, 0x00, 0x04, // data header: return code, transport, len
     0xDE, 0xAD, 0xBE, 0xEF, // actual data
   ]
   let r = parse_response(resp)
   inspect(r is Ok(_), content="true")
   match r {
-    Ok(items) => inspect(items.length(), content="1")
+    Ok(items) => {
+      inspect(items.length(), content="1")
+      inspect(items[0].length(), content="4")
+      inspect(items[0][0].to_int(), content="222") // 0xDE
+    }
     _ => ()
   }
 
@@ -214,31 +321,6 @@ test "parse_response" {
   // Bad TPKT
   let bad = parse_response([0x04, 0x00, 0x00, 0x10, 0x00])
   inspect(bad is Err(_), content="true")
-}
-
-///|
-test "parse_szl_first" {
-  let data : Array[Byte] = Array::make(50, 0x00)
-  data[31] = 0x00 // header len high
-  data[32] = 0x10 // header len low = 16
-  data[33] = 0x00 // data count high
-  data[34] = 0x05 // data count low = 5
-  data[35] = 0x41 // some data
-  data[36] = 0x42
-  let r = parse_szl_first(data)
-  inspect(r is Ok(_), content="true")
-  match r {
-    Ok(szl) => {
-      inspect(szl.header_len, content="16")
-      inspect(szl.data_count, content="5")
-      inspect(szl.data.length(), content="15")
-    }
-    _ => ()
-  }
-
-  // Too short
-  let short = parse_szl_first(Array::make(30, 0x00))
-  inspect(short is Err(_), content="true")
 }
 
 ///|

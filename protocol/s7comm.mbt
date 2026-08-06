@@ -114,10 +114,12 @@ fn mk_hdr(mt : Byte, refn : Int, plen : Int, dlen : Int) -> Array[Byte] {
 ///|
 fn find_s7(data : Array[Byte]) -> Int {
   for i in 0..<data.length() {
-    if i + 1 < data.length() &&
-      data[i] == PID &&
-      (data[i + 1] == 0x01 || data[i + 1] == 0x03 || data[i + 1] == 0x07) {
-      return i
+    if i + 1 < data.length() {
+      let mt = data[i + 1].to_int() & 0x7F // mask error flag (bit 7)
+      if data[i] == PID &&
+        (mt == 0x01 || mt == 0x03 || mt == 0x07) {
+        return i
+      }
     }
   }
   -1
@@ -146,9 +148,12 @@ pub fn build_read_pdu(
     params[b + 4] = lo8(db)
     params[b + 5] = acode(it.area)
     let a = it.byte_offset
-    params[b + 6] = lo8(a)
-    params[b + 7] = it.bit_offset.to_byte()
-    params[b + 8] = 0x00
+    // 3-byte area address = (byte_offset << 3) | bit_offset, little-endian
+    // byte order inside the item (matches Rust s7 / snap7).
+    let addr = (a << 3) | it.bit_offset
+    params[b + 6] = lo8(addr)
+    params[b + 7] = hi8(addr)
+    params[b + 8] = tb(addr >> 16)
     params[b + 9] = 0x00
     params[b + 10] = 0x00
     params[b + 11] = it.count.to_byte()
@@ -204,9 +209,12 @@ pub fn build_write_pdu(
     params[b + 4] = lo8(db)
     params[b + 5] = acode(it.area)
     let a = it.byte_offset
-    params[b + 6] = lo8(a)
-    params[b + 7] = it.bit_offset.to_byte()
-    params[b + 8] = 0x00
+    // 3-byte area address = (byte_offset << 3) | bit_offset, little-endian
+    // byte order inside the item (matches Rust s7 / snap7).
+    let addr = (a << 3) | it.bit_offset
+    params[b + 6] = lo8(addr)
+    params[b + 7] = hi8(addr)
+    params[b + 8] = tb(addr >> 16)
     params[b + 9] = 0x00
     params[b + 10] = 0x00
     params[b + 11] = id.length().to_byte()
@@ -265,11 +273,22 @@ pub fn parse_response(data : Array[Byte]) -> S7Result[Array[Array[Byte]]] {
   if s7 < 0 {
     return Err(S7Error::invalid_pdu("No S7 header"))
   }
-  if data[s7 + 1] == 0x03 {
-    return Err(S7Error::plc_error(data[s7 + 4].to_int(), "PLC error"))
+  // The error flag is bit 7 of the message-type byte. A normal Ack-Data
+  // (0x03) is NOT an error - the previous `== 0x03` check wrongly rejected
+  // every read response coming from a real PLC.
+  if (data[s7 + 1].to_int() & 0x80) != 0 {
+    let err = if s7 + 11 < n {
+      (data[s7 + 10].to_int() << 8) | data[s7 + 11].to_int()
+    } else {
+      0
+    }
+    return Err(S7Error::plc_error(err, "PLC error"))
   }
-  let plen = (data[s7 + 5].to_int() << 8) | data[s7 + 6].to_int()
-  let dlen = (data[s7 + 7].to_int() << 8) | data[s7 + 8].to_int()
+  // Parameter length lives at s7+6..7 and data length at s7+8..9 (S7 spec,
+  // matches mk_hdr). The previous code read s7+5..6 / s7+7..8 (off by one),
+  // which made it compute the wrong data offset on real PLC responses.
+  let plen = (data[s7 + 6].to_int() << 8) | data[s7 + 7].to_int()
+  let dlen = (data[s7 + 8].to_int() << 8) | data[s7 + 9].to_int()
   let ds = s7 + 10 + plen
   if ds + dlen > n {
     return Err(S7Error::invalid_pdu("Data overflow"))
@@ -280,10 +299,16 @@ pub fn parse_response(data : Array[Byte]) -> S7Result[Array[Array[Byte]]] {
     if pos + 4 > n {
       break
     }
+    let rc = data[pos]
     let ilen = (data[pos + 2].to_int() << 8) | data[pos + 3].to_int()
     pos += 4
     if pos + ilen > n {
       break
+    }
+    // Per-item return code: 0xFF = OK, anything else is a PLC error
+    // (e.g. 0x05 = object not found when reading a non-existent DB).
+    if rc != 0xFF {
+      return Err(S7Error::plc_error(rc.to_int(), "PLC read item error"))
     }
     let idata : Array[Byte] = Array::make(ilen, 0x00)
     for i in 0..<ilen {
@@ -299,29 +324,37 @@ pub fn parse_response(data : Array[Byte]) -> S7Result[Array[Array[Byte]]] {
 
 ///|
 pub fn build_setup_pdu(refn : Int, call : Int, called : Int) -> Array[Byte] {
-  let pkt : Array[Byte] = Array::make(22, 0x00)
+  // Standard S7 "Setup communication" job (25 bytes), byte-for-byte the same
+  // layout as Rust s7's PDU_NEGOTIATION_TELEGRAM. Param section (8 bytes):
+  //   [17] 0xF0 function=setup | [18..19] reserved | [20..21] max calling
+  //   [22] max called | [23..24] requested PDU size (480 = 0x01E0)
+  let pdu_size = 480
+  let pkt : Array[Byte] = Array::make(25, 0x00)
   pkt[0] = 0x03
   pkt[1] = 0x00
   pkt[2] = 0x00
-  pkt[3] = 0x16
+  pkt[3] = 0x19
   pkt[4] = 0x02
   pkt[5] = 0xF0
   pkt[6] = 0x80
   pkt[7] = PID
   pkt[8] = 0x01
   pkt[9] = 0x00
-  pkt[10] = hi8(refn)
-  pkt[11] = lo8(refn)
-  pkt[12] = 0x00
+  pkt[10] = 0x00
+  pkt[11] = hi8(refn)
+  pkt[12] = lo8(refn)
   pkt[13] = 0x00
-  pkt[14] = 0x07
+  pkt[14] = 0x08 // parameter length = 8
   pkt[15] = 0x00
-  pkt[16] = 0x00
-  pkt[17] = 0xF0
+  pkt[16] = 0x00 // data length = 0
+  pkt[17] = 0xF0 // function = setup
   pkt[18] = 0x00
   pkt[19] = 0x00
-  pkt[20] = call.to_byte()
-  pkt[21] = called.to_byte()
+  pkt[20] = call.to_byte() // max calling length hi = 1
+  pkt[21] = 0x00           // max calling length lo
+  pkt[22] = called.to_byte() // max called length hi = 1
+  pkt[23] = hi8(pdu_size)  // requested PDU size hi = 0x01
+  pkt[24] = lo8(pdu_size)  // requested PDU size lo = 0xE0
   pkt
 }
 
@@ -398,38 +431,43 @@ pub fn parse_cotp_cc(data : Array[Byte]) -> S7Result[Int] {
 
 ///|
 pub fn build_plc_start_pdu(refn : Int) -> Array[Byte] {
-  let pkt : Array[Byte] = Array::make(33, 0x00)
+  // Cold start request - byte-for-byte matches Rust s7 COLD_START_TELEGRAM
+  // (39 bytes). PDU_START = 0x28. Trailing bytes are the "P_PROGRAM" password.
+  let pkt : Array[Byte] = Array::make(39, 0x00)
   pkt[0] = 0x03
   pkt[1] = 0x00
   pkt[2] = 0x00
-  pkt[3] = 0x21
+  pkt[3] = 0x27
   pkt[4] = 0x02
   pkt[5] = 0xF0
   pkt[6] = 0x80
   pkt[7] = PID
   pkt[8] = 0x01
   pkt[9] = 0x00
-  pkt[10] = hi8(refn)
-  pkt[11] = lo8(refn)
-  pkt[12] = 0x00
+  pkt[10] = 0x00
+  pkt[11] = hi8(refn)
+  pkt[12] = lo8(refn)
   pkt[13] = 0x00
-  pkt[14] = 0x10
+  pkt[14] = 0x16 // parameter length = 22
   pkt[15] = 0x00
-  pkt[16] = 0x00
-  pkt[17] = 0x00
-  pkt[18] = 0x00
-  pkt[19] = 0x04
-  pkt[20] = 0x01
-  pkt[21] = 0x12
-  pkt[22] = 0x08
-  pkt[23] = 0x02
-  pkt[24] = 0x10
-  pkt[25] = 0x00
+  pkt[16] = 0x00 // data length = 0
+  pkt[17] = 0x28 // PDU_START
+  pkt[24] = 0xFD
+  pkt[26] = 0x02
+  pkt[27] = 0x43
+  pkt[28] = 0x20
+  pkt[29] = 0x09
+  let pw : Array[Byte] = [0x50, 0x5F, 0x50, 0x52, 0x4F, 0x47, 0x52, 0x41, 0x4D]
+  for i in 0..<pw.length() {
+    pkt[30 + i] = pw[i]
+  }
   pkt
 }
 
 ///|
 pub fn build_plc_stop_pdu(refn : Int) -> Array[Byte] {
+  // Stop request - byte-for-byte matches Rust s7 STOP_TELEGRAM (33 bytes).
+  // PDU_STOP = 0x29. Trailing bytes are the "P_PROGRAM" password.
   let pkt : Array[Byte] = Array::make(33, 0x00)
   pkt[0] = 0x03
   pkt[1] = 0x00
@@ -441,66 +479,69 @@ pub fn build_plc_stop_pdu(refn : Int) -> Array[Byte] {
   pkt[7] = PID
   pkt[8] = 0x01
   pkt[9] = 0x00
-  pkt[10] = hi8(refn)
-  pkt[11] = lo8(refn)
-  pkt[12] = 0x00
+  pkt[10] = 0x00
+  pkt[11] = hi8(refn)
+  pkt[12] = lo8(refn)
   pkt[13] = 0x00
-  pkt[14] = 0x10
+  pkt[14] = 0x10 // parameter length = 16
   pkt[15] = 0x00
   pkt[16] = 0x00
-  pkt[17] = 0x29
-  pkt[18] = 0x00
-  pkt[19] = 0x04
-  pkt[20] = 0x01
-  pkt[21] = 0x13
-  pkt[22] = 0x08
-  pkt[23] = 0x02
-  pkt[24] = 0x10
-  pkt[25] = 0x01
+  pkt[17] = 0x29 // PDU_STOP
+  pkt[23] = 0x09
+  let pw : Array[Byte] = [0x50, 0x5F, 0x50, 0x52, 0x4F, 0x47, 0x52, 0x41, 0x4D]
+  for i in 0..<pw.length() {
+    pkt[24 + i] = pw[i]
+  }
   pkt
 }
 
 ///|
 pub fn build_plc_restart_pdu(refn : Int) -> Array[Byte] {
-  let pkt : Array[Byte] = Array::make(33, 0x00)
+  // Warm start request - byte-for-byte matches Rust s7 WARM_START_TELEGRAM
+  // (37 bytes). PDU_START = 0x28. Trailing bytes are the "P_PROGRAM" password.
+  let pkt : Array[Byte] = Array::make(37, 0x00)
   pkt[0] = 0x03
   pkt[1] = 0x00
   pkt[2] = 0x00
-  pkt[3] = 0x21
+  pkt[3] = 0x25
   pkt[4] = 0x02
   pkt[5] = 0xF0
   pkt[6] = 0x80
   pkt[7] = PID
   pkt[8] = 0x01
   pkt[9] = 0x00
-  pkt[10] = hi8(refn)
-  pkt[11] = lo8(refn)
-  pkt[12] = 0x00
+  pkt[10] = 0x00
+  pkt[11] = hi8(refn)
+  pkt[12] = lo8(refn)
   pkt[13] = 0x00
-  pkt[14] = 0x10
+  pkt[14] = 0x14 // parameter length = 20
   pkt[15] = 0x00
   pkt[16] = 0x00
-  pkt[17] = 0x00
-  pkt[18] = 0x00
-  pkt[19] = 0x04
-  pkt[20] = 0x01
-  pkt[21] = 0x12
-  pkt[22] = 0x08
-  pkt[23] = 0x02
-  pkt[24] = 0x10
-  pkt[25] = 0x00
+  pkt[17] = 0x28 // PDU_START
+  pkt[24] = 0xFD
+  pkt[27] = 0x09
+  let pw : Array[Byte] = [0x50, 0x5F, 0x50, 0x52, 0x4F, 0x47, 0x52, 0x41, 0x4D]
+  for i in 0..<pw.length() {
+    pkt[28 + i] = pw[i]
+  }
   pkt
 }
 
 ///|
-pub fn parse_plc_ctrl_resp(data : Array[Byte]) -> S7Result[Unit] {
+pub fn parse_plc_ctrl_resp(
+  data : Array[Byte],
+  start_cmp : Byte,
+  already_cmp : Byte,
+) -> S7Result[Unit] {
   if data.length() < 19 {
     return Err(S7Error::invalid_pdu("Resp too short"))
   }
-  if data[17] != 0x12 && data[17] != 0x13 {
-    return Err(S7Error::plc_error(data[17].to_int(), "PLC ctrl error"))
+  // The response echoes the requested function code (0x28 start / 0x29 stop)
+  if data[17] != start_cmp {
+    return Err(S7Error::plc_error(data[17].to_int(), "PLC ctrl failed"))
   }
-  if data[18] == 0x02 {
+  // A non-zero sub-code (0x02 already running / 0x07 already stopped)
+  if data[18] == already_cmp {
     return Err(S7Error::job_pending())
   }
   Ok(())
@@ -510,6 +551,8 @@ pub fn parse_plc_ctrl_resp(data : Array[Byte]) -> S7Result[Unit] {
 
 ///|
 pub fn build_plc_status_pdu(refn : Int) -> Array[Byte] {
+  // Read PLC status (userdata) - byte-for-byte matches Rust s7
+  // PLC_STATUS_TELEGRAM (33 bytes).
   let pkt : Array[Byte] = Array::make(33, 0x00)
   pkt[0] = 0x03
   pkt[1] = 0x00
@@ -519,24 +562,26 @@ pub fn build_plc_status_pdu(refn : Int) -> Array[Byte] {
   pkt[5] = 0xF0
   pkt[6] = 0x80
   pkt[7] = PID
-  pkt[8] = 0x07
+  pkt[8] = 0x07 // userdata
   pkt[9] = 0x00
-  pkt[10] = hi8(refn)
-  pkt[11] = lo8(refn)
-  pkt[12] = 0x00
+  pkt[10] = 0x00
+  pkt[11] = hi8(refn)
+  pkt[12] = lo8(refn)
   pkt[13] = 0x00
-  pkt[14] = 0x08
+  pkt[14] = 0x08 // parameter length = 8
   pkt[15] = 0x00
-  pkt[16] = 0x00
-  pkt[17] = 0x00
-  pkt[18] = 0x00
-  pkt[19] = 0x04
-  pkt[20] = 0x01
-  pkt[21] = 0x12
-  pkt[22] = 0x08
-  pkt[23] = 0x02
-  pkt[24] = 0x10
-  pkt[25] = 0x00
+  pkt[16] = 0x08 // data length = 8
+  pkt[18] = 0x01
+  pkt[19] = 0x12
+  pkt[20] = 0x04
+  pkt[21] = 0x11
+  pkt[22] = 0x44
+  pkt[23] = 0x01
+  pkt[25] = 0xFF
+  pkt[26] = 0x09
+  pkt[28] = 0x04
+  pkt[29] = 0x04
+  pkt[30] = 0x24
   pkt
 }
 
@@ -559,6 +604,8 @@ pub fn parse_plc_status(data : Array[Byte]) -> S7Result[CpuStatus] {
 
 ///|
 pub fn build_szl_first_pdu(refn : Int, id : Int, index : Int) -> Array[Byte] {
+  // SZL first request - matches Rust s7 SZL_FIRST_TELEGRAM (33 bytes).
+  // Userdata header, then SZL ID at [29..30] and Index at [31..32].
   let pkt : Array[Byte] = Array::make(33, 0x00)
   pkt[0] = 0x03
   pkt[1] = 0x00
@@ -568,33 +615,35 @@ pub fn build_szl_first_pdu(refn : Int, id : Int, index : Int) -> Array[Byte] {
   pkt[5] = 0xF0
   pkt[6] = 0x80
   pkt[7] = PID
-  pkt[8] = 0x07
+  pkt[8] = 0x07 // userdata
   pkt[9] = 0x00
-  pkt[10] = hi8((refn + 1) & 0xFFFF)
-  pkt[11] = lo8((refn + 1) & 0xFFFF)
-  pkt[12] = 0x00
+  pkt[10] = 0x00
+  pkt[11] = hi8((refn + 1) & 0xFFFF)
+  pkt[12] = lo8((refn + 1) & 0xFFFF)
   pkt[13] = 0x00
-  pkt[14] = 0x0C
+  pkt[14] = 0x08 // parameter length = 8
   pkt[15] = 0x00
-  pkt[16] = 0x00
-  pkt[17] = 0x12
-  pkt[18] = 0x08
+  pkt[16] = 0x08 // data length = 8
+  pkt[18] = 0x01
   pkt[19] = 0x12
-  pkt[20] = 0x44
-  pkt[21] = 0x01
-  pkt[22] = 0x00
-  pkt[23] = 0x01
-  pkt[24] = 0x00
-  pkt[25] = 0x00
-  pkt[26] = hi8(id)
-  pkt[27] = lo8(id)
-  pkt[28] = hi8(index)
-  pkt[29] = lo8(index)
+  pkt[20] = 0x04
+  pkt[21] = 0x11 // function = read SZL
+  pkt[22] = 0x44 // sub
+  pkt[23] = 0x01 // sequence out
+  pkt[25] = 0xFF
+  pkt[26] = 0x09
+  pkt[28] = 0x04
+  pkt[29] = hi8(id)
+  pkt[30] = lo8(id)
+  pkt[31] = hi8(index)
+  pkt[32] = lo8(index)
   pkt
 }
 
 ///|
 pub fn build_szl_next_pdu(refn : Int, seq : Int) -> Array[Byte] {
+  // SZL next request - matches Rust s7 SZL_NEXT_TELEGRAM (33 bytes).
+  // Sequence in at [24], request type marker at [29] = 0x0A.
   let pkt : Array[Byte] = Array::make(33, 0x00)
   pkt[0] = 0x03
   pkt[1] = 0x00
@@ -604,28 +653,23 @@ pub fn build_szl_next_pdu(refn : Int, seq : Int) -> Array[Byte] {
   pkt[5] = 0xF0
   pkt[6] = 0x80
   pkt[7] = PID
-  pkt[8] = 0x07
+  pkt[8] = 0x07 // userdata
   pkt[9] = 0x00
-  pkt[10] = hi8((refn + 1) & 0xFFFF)
-  pkt[11] = lo8((refn + 1) & 0xFFFF)
-  pkt[12] = 0x00
+  pkt[10] = 0x00
+  pkt[11] = hi8((refn + 1) & 0xFFFF)
+  pkt[12] = lo8((refn + 1) & 0xFFFF)
   pkt[13] = 0x00
-  pkt[14] = 0x0C
+  pkt[14] = 0x0C // parameter length = 12
   pkt[15] = 0x00
-  pkt[16] = 0x00
-  pkt[17] = 0x12
-  pkt[18] = 0x08
+  pkt[16] = 0x04 // data length = 4
+  pkt[18] = 0x01
   pkt[19] = 0x12
-  pkt[20] = 0x44
-  pkt[21] = 0x01
-  pkt[22] = hi8(seq)
-  pkt[23] = lo8(seq)
-  pkt[24] = 0x00
-  pkt[25] = 0x00
-  pkt[26] = 0x00
-  pkt[27] = 0x00
-  pkt[28] = 0x00
-  pkt[29] = 0x00
+  pkt[20] = 0x08
+  pkt[21] = 0x12 // function = read SZL
+  pkt[22] = 0x44 // sub
+  pkt[23] = 0x01 // sequence out
+  pkt[24] = seq.to_byte() // sequence in
+  pkt[29] = 0x0A
   pkt
 }
 
@@ -634,13 +678,16 @@ pub fn parse_szl_first(data : Array[Byte]) -> S7Result[SZLData] {
   if data.length() < 42 {
     return Err(S7Error::invalid_pdu("SZL too short"))
   }
-  let hlen = (data[31].to_int() << 8) | data[32].to_int()
-  let dcount = (data[33].to_int() << 8) | data[34].to_int()
+  // SZL response layout (matches Rust s7 / snap7):
+  //   [37..39] header length (u16, x2), [39..41] record count,
+  //   [41..]   SZL data payload
+  let hlen = (data[37].to_int() << 8) | data[38].to_int()
+  let dcount = (data[39].to_int() << 8) | data[40].to_int()
   let sdata : Array[Byte] = []
-  for i in 35..<data.length() {
+  for i in 41..<data.length() {
     sdata.push(data[i])
   }
-  Ok({ header_len: hlen, data_count: dcount, data: sdata })
+  Ok({ header_len: hlen * 2, data_count: dcount, data: sdata })
 }
 
 ///|

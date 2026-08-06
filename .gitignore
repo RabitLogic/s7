@@ -16,3 +16,7 @@ articles/
 *.swp
 *.swo
 *~
+
+# Python (tools/s7_sim.py)
+__pycache__/
+*.pyc

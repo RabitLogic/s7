@@ -174,17 +174,20 @@ pub async fn S7Client::mb_write(
 
 ///|
 pub async fn S7Client::plc_start(self : Self) -> S7Result[Unit] {
-  do_ctrl(self, @protocol.build_plc_start_pdu(self.pdu_ref))
+  // cold start: expect PDU_START (0x28), already-running = 0x02
+  do_ctrl(self, @protocol.build_plc_start_pdu(self.pdu_ref), 0x28, 0x02)
 }
 
 ///|
 pub async fn S7Client::plc_stop(self : Self) -> S7Result[Unit] {
-  do_ctrl(self, @protocol.build_plc_stop_pdu(self.pdu_ref))
+  // stop: expect PDU_STOP (0x29), already-stopped = 0x07
+  do_ctrl(self, @protocol.build_plc_stop_pdu(self.pdu_ref), 0x29, 0x07)
 }
 
 ///|
 pub async fn S7Client::plc_restart(self : Self) -> S7Result[Unit] {
-  do_ctrl(self, @protocol.build_plc_restart_pdu(self.pdu_ref))
+  // warm start: expect PDU_START (0x28), already-running = 0x02
+  do_ctrl(self, @protocol.build_plc_restart_pdu(self.pdu_ref), 0x28, 0x02)
 }
 
 ///|
@@ -288,7 +291,12 @@ async fn exec_write(
 }
 
 ///|
-async fn do_ctrl(cl : S7Client, pdu : Array[Byte]) -> S7Result[Unit] {
+async fn do_ctrl(
+  cl : S7Client,
+  pdu : Array[Byte],
+  start_cmp : Byte,
+  already_cmp : Byte,
+) -> S7Result[Unit] {
   if !cl.connected {
     return Err(S7Error::not_connected())
   }
@@ -300,7 +308,7 @@ async fn do_ctrl(cl : S7Client, pdu : Array[Byte]) -> S7Result[Unit] {
     Err(e) => return Err(e)
     Ok(d) => d
   }
-  @protocol.parse_plc_ctrl_resp(resp)
+  @protocol.parse_plc_ctrl_resp(resp, start_cmp, already_cmp)
 }
 
 ///|
