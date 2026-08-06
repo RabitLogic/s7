@@ -26,6 +26,8 @@ pub fn TcpConfig::new(
   rack? : Int = 0,
   slot? : Int = 1,
   conn_type? : Int = 1,
+  local_tsap? : Array[Byte] = [0x01, 0x00],
+  remote_tsap? : Array[Byte] = [0x01, 0x01],
 ) -> TcpConfig {
   {
     host,
@@ -34,8 +36,8 @@ pub fn TcpConfig::new(
     read_timeout,
     write_timeout,
     use_tls: false,
-    local_tsap: [0x01, 0x00],
-    remote_tsap: [0x01, 0x01],
+    local_tsap,
+    remote_tsap,
     rack,
     slot,
     conn_type,

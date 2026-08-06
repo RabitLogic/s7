@@ -141,22 +141,23 @@ pub fn build_read_pdu(
     let it = items[i]
     params[b] = 0x12
     params[b + 1] = 0x0A
-    // Use word_len for transport size, fallback to tscode
-    params[b + 2] = ts_from_wl(it.word_len)
+    // S7-1500 / PLCSIM Advanced item format (matches Rust s7 READ_WRITE_TELEGRAM):
+    //   12 0A 10 <WL> <count_hi> <count_lo> <db_hi> <db_lo> <area> <addr2> <addr1> <addr0>
+    // where 0x10 is the transport-size marker, WL is the word length (0x01 bit,
+    // 0x02 byte, 0x04 word, ...), count is the element count (big-endian), and
+    // the 24-bit address is big-endian = byte_offset << 3 (| bit for bit reads).
+    params[b + 2] = 0x10
+    params[b + 3] = it.word_len.to_byte()
+    params[b + 4] = hi8(it.count)
+    params[b + 5] = lo8(it.count)
     let db = adb(it.area)
-    params[b + 3] = hi8(db)
-    params[b + 4] = lo8(db)
-    params[b + 5] = acode(it.area)
-    let a = it.byte_offset
-    // 3-byte area address = (byte_offset << 3) | bit_offset, little-endian
-    // byte order inside the item (matches Rust s7 / snap7).
-    let addr = (a << 3) | it.bit_offset
-    params[b + 6] = lo8(addr)
-    params[b + 7] = hi8(addr)
-    params[b + 8] = tb(addr >> 16)
-    params[b + 9] = 0x00
-    params[b + 10] = 0x00
-    params[b + 11] = it.count.to_byte()
+    params[b + 6] = hi8(db)
+    params[b + 7] = lo8(db)
+    params[b + 8] = acode(it.area)
+    let a = (it.byte_offset << 3) | it.bit_offset
+    params[b + 9] = tb((a >> 16) & 0xFF)
+    params[b + 10] = tb((a >> 8) & 0xFF)
+    params[b + 11] = tb(a & 0xFF)
   }
   let hdr = mk_hdr(0x01, refn, params.length(), 0)
   let cd = cotp_dt()
@@ -201,28 +202,40 @@ pub fn build_write_pdu(
     let b = 2 + i * 12
     let it = items[i]
     let id = it.data
+    let dl = id.length()
     params[b] = 0x12
     params[b + 1] = 0x0A
-    params[b + 2] = ts_from_wl(it.word_len)
+    // S7-1500 / PLCSIM Advanced item format (matches Rust s7):
+    //   12 0A 10 <WL> <count_hi> <count_lo> <db_hi> <db_lo> <area> <addr2> <addr1> <addr0>
+    params[b + 2] = 0x10
+    params[b + 3] = it.word_len.to_byte()
+    let cnt = if dl < 1 { 1 } else { dl / data_size_byte(it.word_len) }
+    params[b + 4] = hi8(cnt)
+    params[b + 5] = lo8(cnt)
     let db = adb(it.area)
-    params[b + 3] = hi8(db)
-    params[b + 4] = lo8(db)
-    params[b + 5] = acode(it.area)
-    let a = it.byte_offset
-    // 3-byte area address = (byte_offset << 3) | bit_offset, little-endian
-    // byte order inside the item (matches Rust s7 / snap7).
-    let addr = (a << 3) | it.bit_offset
-    params[b + 6] = lo8(addr)
-    params[b + 7] = hi8(addr)
-    params[b + 8] = tb(addr >> 16)
-    params[b + 9] = 0x00
-    params[b + 10] = 0x00
-    params[b + 11] = id.length().to_byte()
-    wdata.push(0xFF)
-    wdata.push(ts_from_wl(it.word_len))
-    let dl = id.length()
-    wdata.push(hi8(dl))
-    wdata.push(lo8(dl))
+    params[b + 6] = hi8(db)
+    params[b + 7] = lo8(db)
+    params[b + 8] = acode(it.area)
+    let a = (it.byte_offset << 3) | it.bit_offset
+    params[b + 9] = tb((a >> 16) & 0xFF)
+    params[b + 10] = tb((a >> 8) & 0xFF)
+    params[b + 11] = tb(a & 0xFF)
+    // Write data section per item (matches Rust s7):
+    //   [0x00, transport_size, len_hi, len_lo, data...] where len is in bits
+    //   for byte/word/dword (data_size << 3) and in bytes for bit/counter/timer.
+    wdata.push(0x00)
+    let ts = match it.word_len {
+      WL_BIT => tb(3)
+      WL_COUNTER | WL_TIMER => tb(9)
+      _ => tb(4)
+    }
+    wdata.push(ts)
+    let bit_len = match it.word_len {
+      WL_BIT | WL_COUNTER | WL_TIMER => dl
+      _ => dl << 3
+    }
+    wdata.push(hi8(bit_len))
+    wdata.push(lo8(bit_len))
     for bv in id {
       wdata.push(bv)
     }
@@ -263,60 +276,43 @@ pub fn build_write_pdu(
 ///|
 pub fn parse_response(data : Array[Byte]) -> S7Result[Array[Array[Byte]]] {
   let n = data.length()
-  if n < 20 {
-    return Err(S7Error::invalid_pdu("Too short"))
-  }
-  if data[0] != 0x03 {
-    return Err(S7Error::invalid_pdu("Bad TPKT"))
-  }
   let s7 = find_s7(data)
   if s7 < 0 {
     return Err(S7Error::invalid_pdu("No S7 header"))
   }
+  if s7 + 2 > n {
+    return Err(S7Error::invalid_pdu("Too short"))
+  }
   // The error flag is bit 7 of the message-type byte. A normal Ack-Data
-  // (0x03) is NOT an error - the previous `== 0x03` check wrongly rejected
-  // every read response coming from a real PLC.
+  // (0x03) is NOT an error.
   if (data[s7 + 1].to_int() & 0x80) != 0 {
-    let err = if s7 + 11 < n {
+    let err = if s7 + 12 < n {
       (data[s7 + 10].to_int() << 8) | data[s7 + 11].to_int()
     } else {
       0
     }
     return Err(S7Error::plc_error(err, "PLC error"))
   }
-  // Parameter length lives at s7+6..7 and data length at s7+8..9 (S7 spec,
-  // matches mk_hdr). The previous code read s7+5..6 / s7+7..8 (off by one),
-  // which made it compute the wrong data offset on real PLC responses.
-  let plen = (data[s7 + 6].to_int() << 8) | data[s7 + 7].to_int()
-  let dlen = (data[s7 + 8].to_int() << 8) | data[s7 + 9].to_int()
-  let ds = s7 + 10 + plen
-  if ds + dlen > n {
-    return Err(S7Error::invalid_pdu("Data overflow"))
+  if s7 + 18 > n {
+    return Err(S7Error::invalid_pdu("Too short"))
   }
+  // Read item return code at fixed offset s7+14 (full-frame index 21),
+  // matching what S7-PLCSIM Advanced returns and how the Rust s7 library
+  // parses it. 0xFF = OK, anything else is a PLC error (e.g. 0x05 = object
+  // not found, 0x0A = item rejected).
+  let rc = data[s7 + 14].to_int()
+  if rc != 0xFF {
+    return Err(S7Error::plc_error(rc, "PLC read item error"))
+  }
+  // Payload starts at fixed offset s7+18 (full-frame index 25); take it to
+  // the end of the frame. This works for both the classic ack-data layout
+  // (plen=4, length in bytes) and the PLCSIM layout (plen=2, length in bits).
   let items : Array[Array[Byte]] = []
-  let mut pos = ds
-  while pos < ds + dlen {
-    if pos + 4 > n {
-      break
-    }
-    let rc = data[pos]
-    let ilen = (data[pos + 2].to_int() << 8) | data[pos + 3].to_int()
-    pos += 4
-    if pos + ilen > n {
-      break
-    }
-    // Per-item return code: 0xFF = OK, anything else is a PLC error
-    // (e.g. 0x05 = object not found when reading a non-existent DB).
-    if rc != 0xFF {
-      return Err(S7Error::plc_error(rc.to_int(), "PLC read item error"))
-    }
-    let idata : Array[Byte] = Array::make(ilen, 0x00)
-    for i in 0..<ilen {
-      idata[i] = data[pos + i]
-    }
-    items.push(idata)
-    pos += ilen
+  let payload : Array[Byte] = []
+  for i in (s7 + 18)..<n {
+    payload.push(data[i])
   }
+  items.push(payload)
   Ok(items)
 }
 

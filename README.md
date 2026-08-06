@@ -231,7 +231,8 @@ moon run test_plc --target native
 The demo program verifies the whole stack end-to-end: connect, `plc_status` (RUN),
 `cpu_info` (module type / serial / AS name / copyright / module name), DB read,
 DB write and read-back, and a non-zero-offset read. To test against your own PLC,
-edit `host`/`port` in `test_plc/main.mbt` (currently set to `192.168.47.140:102`).
+edit `host`/`port` in `test_plc/main.mbt` (currently set to `192.168.1.40:102`,
+a S7-PLCSIM Advanced instance in **Bridged** mode).
 
 The simulator serves a simulated `DB200` whose first bytes are initialized to
 `0x00, 0x11, 0x22, ...`; the demo writes `0xAA 0xBB` to it and reads it back to
@@ -262,10 +263,23 @@ netsh advfirewall firewall add rule name="Allow S7 ISO-TCP 102" dir=in action=al
 
 > Note: S7-1200/1500 DBs are **optimized by default** ("Optimized block access").
 > Optimized DBs **cannot be read/written with absolute addresses** — the PLC
-> returns an "item not found" error for every client using absolute addressing
-> (this library and nodes7 alike). To access them, disable "Optimized block
-> access" in the DB properties in TIA Portal and download to the PLC again, or
-> use symbolic access.
+> returns an "item not found" error. Disable "Optimized block access" in the DB
+> properties in TIA Portal and download the project to the PLC again.
+>
+> **S7-1500 / PLCSIM Advanced read-item format** (important if a real PLC rejects
+> every absolute read): this library uses the modern S7-1500 read item layout
+>
+> ```
+> 12 0A 10 <WL> <count> <db> <area> <addr2> <addr1> <addr0>
+> ```
+>
+> (transport marker `0x10`, word length, element count big-endian, DB, area,
+> 24-bit address big-endian). The classic snap7 layout
+> (`12 0A <TS> <db> <area> <addr> 00 00 <count>`) is **rejected by
+> S7-PLCSIM Advanced** with "object not found" even for absolute M/I/Q areas.
+> This was verified byte-for-byte against the Rust `s7` crate, which reads DB200
+> fine from PLCSIM. The response parser also reads the item return code at the
+> fixed offset the PLC returns (full-frame byte 21) and the payload from byte 25.
 
 ## License
 

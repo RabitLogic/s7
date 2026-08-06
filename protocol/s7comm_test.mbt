@@ -173,8 +173,9 @@ test "parse_response error flag" {
 
 ///|
 /// A read item for a non-zero byte offset must encode the address as
-/// (offset << 3) | bit as a little-endian 3-byte field. For DB 1, byte 1
-/// → addr = 8 → [0x08, 0x00, 0x00].
+/// (offset << 3) | bit as a big-endian 3-byte field, in the S7-1500/PLCSIM
+/// item layout: 12 0A 10 <WL> <count> <db> <area> <addr2> <addr1> <addr0>.
+/// For DB 1, byte 1 → addr = 8 → [0x00, 0x00, 0x08].
 test "read item address encoding" {
   let items = [ReadItem::db(1, 1, DataType::byte_array(1))]
   match build_read_pdu(items, 1) {
@@ -182,9 +183,17 @@ test "read item address encoding" {
     Ok(pdu) => {
       // Item starts at offset 7 (S7) + 10 (header) + 2 (func/count) = 19
       inspect(pdu[19].to_int(), content="18") // var spec 0x12
-      inspect(pdu[25].to_int(), content="8") // addr low = 0x08
-      inspect(pdu[26].to_int(), content="0") // addr mid
-      inspect(pdu[27].to_int(), content="0") // addr high
+      inspect(pdu[20].to_int(), content="10") // address length 0x0A
+      inspect(pdu[21].to_int(), content="16") // transport marker 0x10
+      inspect(pdu[22].to_int(), content="2") // word length = byte
+      inspect(pdu[23].to_int(), content="0") // count hi
+      inspect(pdu[24].to_int(), content="1") // count lo = 1
+      inspect(pdu[25].to_int(), content="0") // db hi
+      inspect(pdu[26].to_int(), content="1") // db lo = 1
+      inspect(pdu[27].to_int(), content="132") // area = DB (0x84)
+      inspect(pdu[28].to_int(), content="0") // addr MSB
+      inspect(pdu[29].to_int(), content="0") // addr mid
+      inspect(pdu[30].to_int(), content="8") // addr LSB = 0x08
     }
   }
 }

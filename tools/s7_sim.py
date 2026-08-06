@@ -237,26 +237,26 @@ def handle_s7_request(req: dict) -> bytes | None:
             off = 2 + i * 12
             if off + 12 > len(params):
                 break
-            # Parse read item
-            transport = params[off + 2]
-            db_hi = params[off + 3]
-            db_lo = params[off + 4]
-            area = params[off + 5]
-            # 3-byte little-endian area address = (byte_offset << 3) | bit
-            addr = params[off + 6] | (params[off + 7] << 8) | (params[off + 8] << 16)
+            # S7-1500 / PLCSIM item format:
+            #   12 0A 10 <WL> <count_hi> <count_lo> <db_hi> <db_lo> <area> <addr2> <addr1> <addr0>
+            wl = params[off + 3]
+            count = (params[off + 4] << 8) | params[off + 5]
+            db_num = (params[off + 6] << 8) | params[off + 7]
+            area = params[off + 8]
+            addr = (params[off + 9] << 16) | (params[off + 10] << 8) | params[off + 11]
             byte_off = addr >> 3
             bit_off = addr & 0x07
-            count = params[off + 11]
+            word_size = 1 if wl in (0x01, 0x02, 0x03) else (2 if wl in (0x04, 0x05, 0x1C, 0x1D) else 4)
+            data_len = count * word_size
 
-            db_num = (db_hi << 8) | db_lo
             if area == 0x84:  # DataBlock
                 ensure_db(db_num)
                 mem = db_memory[db_num]
-                data = bytes(mem[byte_off:byte_off + count])
+                data = bytes(mem[byte_off:byte_off + data_len])
                 results.append(data)
             else:
                 # Other areas: return zeros
-                results.append(bytes(count))
+                results.append(bytes(data_len))
 
         return build_read_resp(b''.join(results), req['refn'])
 
@@ -266,25 +266,26 @@ def handle_s7_request(req: dict) -> bytes | None:
             off = 2 + i * 12
             if off + 12 > len(params):
                 break
-            transport = params[off + 2]
-            db_hi = params[off + 3]
-            db_lo = params[off + 4]
-            area = params[off + 5]
-            # 3-byte little-endian area address = (byte_offset << 3) | bit
-            addr = params[off + 6] | (params[off + 7] << 8) | (params[off + 8] << 16)
+            # S7-1500 / PLCSIM item format:
+            #   12 0A 10 <WL> <count_hi> <count_lo> <db_hi> <db_lo> <area> <addr2> <addr1> <addr0>
+            wl = params[off + 3]
+            count = (params[off + 4] << 8) | params[off + 5]
+            db_num = (params[off + 6] << 8) | params[off + 7]
+            area = params[off + 8]
+            addr = (params[off + 9] << 16) | (params[off + 10] << 8) | params[off + 11]
             byte_off = addr >> 3
             bit_off = addr & 0x07
-            count = params[off + 11]
+            word_size = 1 if wl in (0x01, 0x02, 0x03) else (2 if wl in (0x04, 0x05, 0x1C, 0x1D) else 4)
+            data_len = count * word_size
 
-            # Write data follows after params in the data section
-            # Each write item has: 0xFF, transport_size, len_hi, len_lo, data...
+            # Write data follows after params in the data section.
+            # Each write item: 0x00, transport_size, len_hi, len_lo, data...
+            # (the len field is in bits for byte/word/dword, so use data_len.)
             wd = req['data']
             if data_offset + 4 <= len(wd):
-                wlen = (wd[data_offset + 2] << 8) | wd[data_offset + 3]
-                wdata = wd[data_offset + 4:data_offset + 4 + wlen]
-                data_offset += 4 + wlen
+                wdata = wd[data_offset + 4:data_offset + 4 + data_len]
+                data_offset += 4 + data_len
 
-                db_num = (db_hi << 8) | db_lo
                 if area == 0x84:  # DataBlock
                     ensure_db(db_num)
                     mem = db_memory[db_num]
