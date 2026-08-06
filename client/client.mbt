@@ -88,13 +88,7 @@ pub async fn S7Client::ag_write(
   if !self.connected {
     return Err(S7Error::not_connected())
   }
-  let item = @protocol.WriteItem::db(
-    db,
-    start,
-    @protocol.DataType::byte(),
-    data,
-  )
-  exec_write(self, [item])
+  chunked_write(self, @protocol.Area::db(db), start, data)
 }
 
 // ===== Process Inputs =====
@@ -114,13 +108,7 @@ pub async fn S7Client::eb_write(
   start : Int,
   data : Array[Byte],
 ) -> S7Result[Unit] {
-  let item = @protocol.WriteItem::new(
-    @protocol.Area::inputs(),
-    start,
-    @protocol.DataType::byte(),
-    data,
-  )
-  exec_write(self, [item])
+  chunked_write(self, @protocol.Area::inputs(), start, data)
 }
 
 // ===== Process Outputs =====
@@ -140,13 +128,7 @@ pub async fn S7Client::ab_write(
   start : Int,
   data : Array[Byte],
 ) -> S7Result[Unit] {
-  let item = @protocol.WriteItem::new(
-    @protocol.Area::outputs(),
-    start,
-    @protocol.DataType::byte(),
-    data,
-  )
-  exec_write(self, [item])
+  chunked_write(self, @protocol.Area::outputs(), start, data)
 }
 
 // ===== Flags =====
@@ -166,8 +148,7 @@ pub async fn S7Client::mb_write(
   start : Int,
   data : Array[Byte],
 ) -> S7Result[Unit] {
-  let item = @protocol.WriteItem::flag(start, @protocol.DataType::byte(), data)
-  exec_write(self, [item])
+  chunked_write(self, @protocol.Area::flags(), start, data)
 }
 
 // ===== PLC Control =====
@@ -229,7 +210,10 @@ async fn chunked_read(
     return Err(S7Error::not_connected())
   }
   let pdu = cl.pdu_size
-  let overhead = 18
+  // Read response overhead = TPKT(4) + COTP(3) + S7 hdr(10) + params(2) +
+  // data item header(4) = 23. Keeping response <= pdu ensures the chunk fits
+  // the negotiated PDU on real PLCs (not just PLCSIM Advanced).
+  let overhead = 23
   let max_chunk = if pdu > overhead { pdu - overhead } else { 240 }
   let mut remaining = size
   let result : Array[Byte] = []
@@ -284,10 +268,55 @@ async fn exec_write(
     Err(e) => return Err(e)
     Ok(_) => ()
   }
-  match cl.tcp.receive(cl.pdu_size) {
+  let resp = match cl.tcp.receive(cl.pdu_size) {
     Err(e) => return Err(e)
-    Ok(_) => Ok(())
+    Ok(d) => d
   }
+  // Verify the write response return code (0xFF = OK) at full-frame byte 21.
+  let s7 = @protocol.find_s7(resp)
+  if s7 < 0 || resp.length() <= s7 + 14 {
+    return Err(S7Error::invalid_pdu("Bad write response"))
+  }
+  let rc = resp[s7 + 14].to_int()
+  if rc != 0xFF {
+    return Err(S7Error::plc_error(rc, "PLC write item error"))
+  }
+  Ok(())
+}
+
+///|
+async fn chunked_write(
+  cl : S7Client,
+  area : @protocol.Area,
+  start : Int,
+  data : Array[Byte],
+) -> S7Result[Unit] {
+  if !cl.connected {
+    return Err(S7Error::not_connected())
+  }
+  let pdu = cl.pdu_size
+  let overhead = 35
+  let max_chunk = if pdu > overhead { pdu - overhead } else { 240 }
+  let mut off = 0
+  while off < data.length() {
+    let cs = if data.length() - off > max_chunk { max_chunk } else { data.length() - off }
+    let chunk : Array[Byte] = Array::make(cs, 0x00)
+    for i in 0..<cs {
+      chunk[i] = data[off + i]
+    }
+    let item = @protocol.WriteItem::new(
+      area,
+      start + off,
+      @protocol.DataType::byte_array(cs),
+      chunk,
+    )
+    match exec_write(cl, [item]) {
+      Err(e) => return Err(e)
+      Ok(_) => ()
+    }
+    off += cs
+  }
+  Ok(())
 }
 
 ///|

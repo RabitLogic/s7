@@ -72,7 +72,7 @@ def build_read_resp(data: bytes, refn: int = 1) -> bytes:
         0x00, 0x00,                      # s7+2/3: reserved
         (refn >> 8) & 0xFF, refn & 0xFF, # s7+4/5: PDU ref
         0x00, 0x04,                      # s7+6/7: param length = 4
-        0x00, total_data_len,            # s7+8/9: data length = 4 + dlen
+        (total_data_len >> 8) & 0xFF, total_data_len & 0xFF,  # s7+8/9: data length = 4 + dlen
         0x00, 0x00,                      # error class / code = 0
         0x00, 0x00,                      # reserved (params)
         0xFF,                            # return code = OK
@@ -81,16 +81,20 @@ def build_read_resp(data: bytes, refn: int = 1) -> bytes:
     ]) + data
 
 def build_write_resp(refn: int = 1) -> bytes:
-    """Build a standard S7 Write response (Ack-Data)."""
-    # TPKT(4) COTP(3) S7hdr(10) params(0) data(4: return code + padding)
+    """Build an S7 Write response (Ack-Data, 22 bytes) matching real PLCs.
+
+    Byte-for-byte the response S7-PLCSIM Advanced returns for a successful
+    write: item return code 0xFF at index 21 (snap7 / Rust s7 check this).
+    """
     return bytes([
-        0x03, 0x00, 0x00, 0x15,  # TPKT len = 21
+        0x03, 0x00, 0x00, 0x16,  # TPKT len = 22
         0x02, 0xF0, 0x80,        # COTP DT
         0x32, 0x03, 0x00, 0x00,  # PID, Ack-Data, reserved
-        (refn >> 8) & 0xFF, refn & 0xFF,
-        0x00, 0x00,              # param len = 0
-        0x00, 0x04,              # data len = 4
-        0xFF, 0x00, 0x00, 0x00,  # return code = OK + padding
+        (refn >> 8) & 0xFF, refn & 0xFF,  # PDU ref
+        0x00, 0x02,              # param len = 2
+        0x00, 0x01,              # data len = 1
+        0x00, 0x00,              # params: error class/code = 0
+        0x05, 0x01, 0xFF,        # data + item return code at index 21
     ])
 
 
@@ -366,11 +370,11 @@ def main():
     server.bind((host, port))
     server.listen(5)
     print(f"[*] S7 PLC Simulator listening on {host}:{port}")
-    print(f"    Simulated DBs: DB200 (256 bytes initialized)")
-    ensure_db(200, 256)
-    # Put some recognizable data in DB200
-    for i in range(min(16, 256)):
-        db_memory[200][i] = i * 16 + i  # 0x00, 0x11, 0x22, ...
+    print(f"    Simulated DBs: DB200 (1796 bytes, matching the real PLC layout)")
+    ensure_db(200, 1796)
+    # Put some recognizable data in DB200 (pattern 0x00, 0x11, 0x22, ...)
+    for i in range(min(16, 1796)):
+        db_memory[200][i] = i * 16 + i
 
     try:
         while True:

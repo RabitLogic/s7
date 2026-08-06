@@ -95,12 +95,46 @@ async fn diag(host : String) -> Unit {
       }
     }
   }
+
+  // === Large read test (PDU chunking) ===
+  println("\n--- large read test ---")
+  for sz in [900, 940, 1000, 1500] {
+    match conn.ag_read(200, 0, sz) {
+      Err(e) => println("   read \{sz}B error: \{@utils.err_to_string(e)}")
+      Ok(b) => println("   read \{sz}B -> got \{b.length()} bytes")
+    }
+  }
+
+  // === Large write test (> 1 PDU, requires chunking) ===
+  println("\n--- large write test (1200B @500, 2 chunks) ---")
+  let big2 : Array[Byte] = Array::make(1200, 0x00)
+  for i in 0..<1200 {
+    big2[i] = (i & 0xFF).to_byte()
+  }
+  match conn.ag_write(200, 500, big2) {
+    Err(e) => println("   large write error: \{@utils.err_to_string(e)}")
+    Ok(_) => println("   ✅ large write OK (1200B @500)")
+  }
+  match conn.ag_read(200, 500, 1200) {
+    Err(e) => println("   large read-back error: \{@utils.err_to_string(e)}")
+    Ok(b) => {
+      let mut same = b.length() == 1200
+      if same {
+        for i in 0..<1200 {
+          if b[i] != big2[i] {
+            same = false
+          }
+        }
+      }
+      println("   large write verified: \{same} (\{b.length()} bytes read back)")
+    }
+  }
   conn.disconnect()
 }
 
 ///|
 async fn main {
-  println("DB200 test[] string-array write against real PLCSIM")
+  println("DB200 comprehensive test against real PLCSIM")
   diag("192.168.1.40")
   println("\n🎉 Done")
 }

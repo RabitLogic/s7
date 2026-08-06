@@ -8,7 +8,7 @@ pub type S7Error = @core.S7Error
 const PID : Byte = 0x32
 
 ///|
-const MAX_PDU : Int = 480
+const MAX_PDU : Int = 960
 
 ///|
 const PR : Byte = 0x04
@@ -126,7 +126,7 @@ fn mk_hdr(mt : Byte, refn : Int, plen : Int, dlen : Int) -> Array[Byte] {  let b
 }
 
 ///|
-fn find_s7(data : Array[Byte]) -> Int {
+pub fn find_s7(data : Array[Byte]) -> Int {
   for i in 0..<data.length() {
     if i + 1 < data.length() {
       let mt = data[i + 1].to_int() & 0x7F // mask error flag (bit 7)
