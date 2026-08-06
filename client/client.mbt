@@ -91,6 +91,48 @@ pub async fn S7Client::ag_write(
   chunked_write(self, @protocol.Area::db(db), start, data)
 }
 
+// ===== DB String convenience =====
+
+///|
+/// Read an S7 STRING field and decode it to a MoonBit String.
+/// `max_len` is the declared max length of the field (e.g. 254 for `String`).
+pub async fn S7Client::ag_read_string(
+  self : Self,
+  db : Int,
+  start : Int,
+  max_len : Int,
+) -> S7Result[String] {
+  if !self.connected {
+    return Err(S7Error::not_connected())
+  }
+  let size = max_len + 2
+  match chunked_read(self, @protocol.Area::db(db), start, size) {
+    Err(e) => Err(e)
+    Ok(data) => Ok(@protocol.decode_s7_string(data))
+  }
+}
+
+///|
+/// Write a MoonBit String into an S7 STRING field (UTF-8 encoded, truncated
+/// to `max_len`). Returns the field bytes written.
+pub async fn S7Client::ag_write_string(
+  self : Self,
+  db : Int,
+  start : Int,
+  max_len : Int,
+  value : String,
+) -> S7Result[Array[Byte]] {
+  if !self.connected {
+    return Err(S7Error::not_connected())
+  }
+  let field = @protocol.StringField::new(db, start, max_len, value)
+  let bytes = field.to_bytes()
+  match chunked_write(self, @protocol.Area::db(db), start, bytes) {
+    Err(e) => Err(e)
+    Ok(_) => Ok(bytes)
+  }
+}
+
 // ===== Process Inputs =====
 
 ///|

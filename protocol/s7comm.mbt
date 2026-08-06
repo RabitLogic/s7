@@ -111,6 +111,55 @@ pub fn encode_s7_string(max_len : Int, s : String) -> Array[Byte] {
 }
 
 ///|
+/// Decode UTF-8 bytes (from a Buffer.to_bytes()) back into a MoonBit String.
+fn decode_utf8(b : Array[Byte]) -> String {
+  let chars : Array[Char] = []
+  let mut i = 0
+  while i < b.length() {
+    let c0 = b[i].to_int() & 0xFF
+    if c0 < 0x80 {
+      chars.push(Char::from_int(c0))
+      i += 1
+    } else if c0 < 0xE0 && i + 1 < b.length() {
+      let cp = ((c0 & 0x1F) << 6) | (b[i + 1].to_int() & 0x3F)
+      chars.push(Char::from_int(cp))
+      i += 2
+    } else if c0 < 0xF0 && i + 2 < b.length() {
+      let cp =
+        ((c0 & 0x0F) << 12) | ((b[i + 1].to_int() & 0x3F) << 6) | (b[i + 2].to_int() & 0x3F)
+      chars.push(Char::from_int(cp))
+      i += 3
+    } else if i + 3 < b.length() {
+      let cp =
+        ((c0 & 0x07) << 18) | ((b[i + 1].to_int() & 0x3F) << 12) |
+          ((b[i + 2].to_int() & 0x3F) << 6) | (b[i + 3].to_int() & 0x3F)
+      chars.push(Char::from_int(cp))
+      i += 4
+    } else {
+      i += 1
+    }
+  }
+  String::from_array(chars)
+}
+
+///|
+/// Decode the raw bytes of an S7 STRING field `[max_len, cur_len, chars...]`
+/// back into a MoonBit String (chars are UTF-8).
+pub fn decode_s7_string(data : Array[Byte]) -> String {
+  if data.length() < 2 {
+    return ""
+  }
+  let cur = data[1].to_int()
+  let avail = data.length() - 2
+  let n = if cur > avail { avail } else { cur }
+  let body : Array[Byte] = []
+  for i in 2..<(2 + n) {
+    body.push(data[i])
+  }
+  decode_utf8(body)
+}
+
+///|
 fn mk_hdr(mt : Byte, refn : Int, plen : Int, dlen : Int) -> Array[Byte] {  let b : Array[Byte] = Array::make(10, 0x00)
   b[0] = PID
   b[1] = mt

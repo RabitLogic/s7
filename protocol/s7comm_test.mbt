@@ -47,6 +47,35 @@ test "encode_s7_string" {
 }
 
 ///|
+test "decode_s7_string" {
+  // [max=254, len=3, 'A''B''C'] → "ABC"
+  let b : Array[Byte] = [0xFE, 0x03, 0x41, 0x42, 0x43]
+  inspect(decode_s7_string(b), content="ABC")
+  // empty string
+  let e : Array[Byte] = [0xFE, 0x00]
+  inspect(decode_s7_string(e), content="")
+  // round-trip with UTF-8 (ASCII here); non-ASCII uses @buffer UTF-8
+  let enc = encode_s7_string(254, "你好")
+  inspect(decode_s7_string(enc), content="你好")
+}
+
+///|
+test "StringField to_bytes/from_bytes" {
+  let f = StringField::new(200, 4, 254, "ABC")
+  let bytes = f.to_bytes()
+  inspect(bytes.length(), content="256")
+  inspect(bytes[0].to_int(), content="254") // max_len
+  inspect(bytes[1].to_int(), content="3") // cur_len
+  inspect(bytes[2].to_int(), content="65") // 'A'
+  // decode round-trip
+  let back = StringField::from_bytes(200, 4, 254, bytes)
+  inspect(back.value(), content="ABC")
+  inspect(back.db_number(), content="200")
+  inspect(back.offset(), content="4")
+  inspect(back.max_length(), content="254")
+}
+
+///|
 test "build_read_write_pdu" {
   let items = [ReadItem::db(1, 0, DataType::byte())]
   let r = build_read_pdu(items, 1)

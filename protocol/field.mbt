@@ -336,6 +336,64 @@ fn ilog2_floor(x : Double) -> Int {
   n
 }
 
+// ===== StringField =====
+
+///|
+/// Structured access to an S7 STRING field: `[max_len, cur_len, chars...]`.
+pub struct StringField {
+  db_num : Int
+  byte_offset : Int
+  max_len : Int
+  value : String
+}
+
+///|
+pub fn StringField::new(db : Int, byte_off : Int, max_len : Int, value : String) -> StringField {
+  { db_num: db, byte_offset: byte_off, max_len, value }
+}
+
+///|
+pub fn StringField::value(self : StringField) -> String {
+  self.value
+}
+
+///|
+pub fn StringField::db_number(self : StringField) -> Int {
+  self.db_num
+}
+
+///|
+pub fn StringField::offset(self : StringField) -> Int {
+  self.byte_offset
+}
+
+///|
+pub fn StringField::max_length(self : StringField) -> Int {
+  self.max_len
+}
+
+///|
+/// Encode to the full S7 STRING field bytes `[max_len, cur_len, chars..., 0x00...]`
+/// padded to `max_len + 2` bytes, ready to write to the PLC.
+pub fn StringField::to_bytes(self : StringField) -> Array[Byte] {
+  let b = encode_s7_string(self.max_len, self.value)
+  while b.length() < self.max_len + 2 {
+    b.push(0x00)
+  }
+  b
+}
+
+///|
+/// Decode raw S7 STRING field bytes into a StringField.
+pub fn StringField::from_bytes(
+  db : Int,
+  byte_off : Int,
+  max_len : Int,
+  data : Array[Byte],
+) -> StringField {
+  { db_num: db, byte_offset: byte_off, max_len, value: decode_s7_string(data) }
+}
+
 // ===== Field Trait =====
 
 ///|

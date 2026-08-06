@@ -1,14 +1,4 @@
 ///|
-fn make_s7_str_field(s : String) -> Array[Byte] {
-  // Build a full 256-byte S7 String field: [max_len, cur_len, chars..., zeros]
-  let b = @protocol.encode_s7_string(254, s)
-  while b.length() < 256 {
-    b.push(0x00)
-  }
-  b
-}
-
-///|
 async fn diag(host : String) -> Unit {
   let cfg = @transport.TcpConfig::new(
     host=host,
@@ -47,19 +37,10 @@ async fn diag(host : String) -> Unit {
       println("   index = \{idx}")
     }
   }
-  match conn.ag_read(200, 4, 32) {
-    Err(e) => println("   DB200 code read error: \{@utils.err_to_string(e)}")
-    Ok(b) => {
-      let cur = b[1].to_int()
-      let mut s = ""
-      for i in 2..<b.length() {
-        if i - 2 >= cur {
-          break
-        }
-        s = s + b[i].to_string()
-      }
-      println("   code = '\{s}'")
-    }
+  // Elegant string read
+  match conn.ag_read_string(200, 4, 254) {
+    Err(e) => println("   code read error: \{@utils.err_to_string(e)}")
+    Ok(s) => println("   code = '\{s}'")
   }
 
   // === DB200 size probe (confirm new test[] structure is live) ===
@@ -72,27 +53,21 @@ async fn diag(host : String) -> Unit {
     }
   }
 
-  // === DB200 test[] string-array write (persistent) ===
+  // === DB200 test[] string-array write (elegant String API) ===
   // test[i] starts at 260 + i*256 (each String = 256 bytes, max 254).
-  println("\n--- test[] string-array write ---")
+  println("\n--- test[] string-array (ag_write_string / ag_read_string) ---")
   for i in 0..<6 {
     let off = 260 + i * 256
-    match conn.ag_write(200, off, make_s7_str_field("T\{i}")) {
-      Err(e) => println("   write test[\{i}]@\{off} error: \{@utils.err_to_string(e)}")
+    match conn.ag_write_string(200, off, 254, "T\{i}") {
+      Err(e) => println("   write test[\{i}] error: \{@utils.err_to_string(e)}")
       Ok(_) => println("   ✅ test[\{i}]@\{off} = \"T\{i}\"")
     }
   }
-  // Read back the test[] headers and verify each string
   for i in 0..<6 {
     let off = 260 + i * 256
-    match conn.ag_read(200, off, 4) {
+    match conn.ag_read_string(200, off, 254) {
       Err(e) => println("   read test[\{i}] error: \{@utils.err_to_string(e)}")
-      Ok(b) => {
-        let cur = b[1].to_int()
-        // expect "T\{i}" → chars 'T'(0x54) + digit (0x30+i)
-        let ok = b[0].to_int() == 254 && cur == 2 && b[2].to_int() == 84 && b[3].to_int() == 0x30 + i
-        println("   test[\{i}]@\{off}: \{@utils.hex_dump(b)}  verify: \{ok}")
-      }
+      Ok(s) => println("   test[\{i}]@\{off} = '\{s}'  (expect \"T\{i}\" → \{s == "T\{i}"})")
     }
   }
 

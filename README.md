@@ -68,6 +68,8 @@ async fn main {
 | `disconnect()` | Disconnect |
 | `async ag_read(db, start, size)` | Read from data block (DB) |
 | `async ag_write(db, start, data)` | Write to data block |
+| `async ag_read_string(db, start, max_len)` | Read an S7 STRING field → `String` |
+| `async ag_write_string(db, start, max_len, value)` | Write a `String` to an S7 STRING field (UTF-8) |
 | `async eb_read/eb_write` | Read/write process inputs (E/A) |
 | `async ab_read/ab_write` | Read/write process outputs (A/A) |
 | `async mb_read/mb_write` | Read/write flags/markers (M) |
@@ -76,6 +78,29 @@ async fn main {
 | `async cpu_info` | Get CPU module info (SZL 0x001C) |
 | `async cp_info` | Get CP/network info (SZL 0x0131) |
 | `is_connected` | Check connection status |
+
+### Working with S7 STRING fields (elegant)
+
+Read/write a `String` field without touching bytes:
+
+```moonbit
+// Read the `code` field (String, max 254) at offset 4 of DB200
+match conn.ag_read_string(200, 4, 254) {
+  Ok(s) => println("code = '\{s}'")
+}
+
+// Write a string (UTF-8 encoded, truncated to max_len)
+let _ = conn.ag_write_string(200, 4, 254, "Hello S7")
+```
+
+Protocol helpers (also used internally):
+
+| Function | Description |
+|----------|-------------|
+| `@protocol.encode_s7_string(max_len, s) -> Array[Byte]` | Encode `String` → `[max_len, cur_len, utf8...]` |
+| `@protocol.decode_s7_string(bytes) -> String` | Decode raw S7 STRING bytes → `String` |
+| `@protocol.StringField::new(db, off, max_len, value)` | Structured string field |
+| `StringField::to_bytes()` / `from_bytes(db, off, max_len, data)` / `value()` | Encode/decode field |
 
 ### TcpConfig
 
