@@ -323,12 +323,11 @@ pub fn parse_response(data : Array[Byte]) -> S7Result[Array[Array[Byte]]] {
 // ========== Setup ==========
 
 ///|
-pub fn build_setup_pdu(refn : Int, call : Int, called : Int) -> Array[Byte] {
-  // Standard S7 "Setup communication" job (25 bytes), byte-for-byte the same
-  // layout as Rust s7's PDU_NEGOTIATION_TELEGRAM. Param section (8 bytes):
-  //   [17] 0xF0 function=setup | [18..19] reserved | [20..21] max calling
-  //   [22] max called | [23..24] requested PDU size (480 = 0x01E0)
-  let pdu_size = 480
+pub fn build_setup_pdu(_refn : Int, _call : Int, _called : Int) -> Array[Byte] {
+  // Standard S7 "Setup communication" job (25 bytes), byte-for-byte the layout
+  // that S7-PLCSIM Advanced accepts (captured from nodes7 on the wire):
+  //   params = F0 00 00 08 00 08 <pdu_hi> <pdu_lo>, requested PDU = 960.
+  let pdu_size = 960
   let pkt : Array[Byte] = Array::make(25, 0x00)
   pkt[0] = 0x03
   pkt[1] = 0x00
@@ -341,8 +340,8 @@ pub fn build_setup_pdu(refn : Int, call : Int, called : Int) -> Array[Byte] {
   pkt[8] = 0x01
   pkt[9] = 0x00
   pkt[10] = 0x00
-  pkt[11] = hi8(refn)
-  pkt[12] = lo8(refn)
+  pkt[11] = 0x00
+  pkt[12] = 0x00
   pkt[13] = 0x00
   pkt[14] = 0x08 // parameter length = 8
   pkt[15] = 0x00
@@ -350,11 +349,11 @@ pub fn build_setup_pdu(refn : Int, call : Int, called : Int) -> Array[Byte] {
   pkt[17] = 0xF0 // function = setup
   pkt[18] = 0x00
   pkt[19] = 0x00
-  pkt[20] = call.to_byte() // max calling length hi = 1
-  pkt[21] = 0x00           // max calling length lo
-  pkt[22] = called.to_byte() // max called length hi = 1
-  pkt[23] = hi8(pdu_size)  // requested PDU size hi = 0x01
-  pkt[24] = lo8(pdu_size)  // requested PDU size lo = 0xE0
+  pkt[20] = 0x08
+  pkt[21] = 0x00
+  pkt[22] = 0x08
+  pkt[23] = hi8(pdu_size) // 0x03
+  pkt[24] = lo8(pdu_size) // 0xC0
   pkt
 }
 
@@ -379,7 +378,11 @@ pub fn parse_setup_resp(data : Array[Byte]) -> S7Result[Int] {
 pub fn build_cotp_cr(lsap : Array[Byte], rsap : Array[Byte]) -> Array[Byte] {
   let sl = lsap.length()
   let rl = rsap.length()
-  let total = 4 + 7 + 2 + sl + 2 + rl + 3
+  // Standard ISO-on-TCP Connection Request, byte-for-byte what S7-PLCSIM
+  // Advanced / nodes7 / snap7 send: C0 (TPDU size = 0x0A) FIRST, then C1
+  // (calling TSAP), then C2 (called TSAP). PLCSIM Advanced rejects the
+  // variant that puts C0 last with value 0x03.
+  let total = 18 + sl + rl
   let pkt : Array[Byte] = Array::make(total, 0x00)
   pkt[0] = 0x03
   pkt[1] = 0x00
@@ -390,26 +393,22 @@ pub fn build_cotp_cr(lsap : Array[Byte], rsap : Array[Byte]) -> Array[Byte] {
   pkt[6] = 0x00
   pkt[7] = 0x00
   pkt[8] = 0x00
-  pkt[9] = 0x01
+  pkt[9] = 0x02 // source reference
   pkt[10] = 0x00
-  let mut pos = 11
-  pkt[pos] = 0xC1
-  pkt[pos + 1] = sl.to_byte()
-  pos += 2
+  pkt[11] = 0xC0 // TPDU size parameter
+  pkt[12] = 0x01
+  pkt[13] = 0x0A // TPDU size = 1024
+  pkt[14] = 0xC1 // calling TSAP
+  pkt[15] = sl.to_byte()
   for i in 0..<sl {
-    pkt[pos + i] = lsap[i]
+    pkt[16 + i] = lsap[i]
   }
-  pos += sl
-  pkt[pos] = 0xC2
+  let pos = 16 + sl
+  pkt[pos] = 0xC2 // called TSAP
   pkt[pos + 1] = rl.to_byte()
-  pos += 2
   for i in 0..<rl {
-    pkt[pos + i] = rsap[i]
+    pkt[pos + 2 + i] = rsap[i]
   }
-  pos += rl
-  pkt[pos] = 0xC0
-  pkt[pos + 1] = 0x01
-  pkt[pos + 2] = 0x03
   pkt
 }
 

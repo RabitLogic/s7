@@ -9,10 +9,10 @@ test "build_setup_pdu" {
   inspect(pdu[1].to_int(), content="0")
   // TPKT length field must equal the packet size
   inspect(((pdu[2].to_int() << 8) | pdu[3].to_int()), content="25")
-  // Param length = 8, function = 0xF0, requested PDU = 480
+  // Param length = 8, function = 0xF0, requested PDU = 960 (PLCSIM-compatible)
   inspect(((pdu[13].to_int() << 8) | pdu[14].to_int()), content="8")
   inspect(pdu[17].to_int(), content="240")
-  inspect(((pdu[23].to_int() << 8) | pdu[24].to_int()), content="480")
+  inspect(((pdu[23].to_int() << 8) | pdu[24].to_int()), content="960")
 }
 
 ///|
